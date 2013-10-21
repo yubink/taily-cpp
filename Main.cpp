@@ -5,132 +5,147 @@
 #include <string>
 #include <db_cxx.h>
 #include <boost/math/distributions/gamma.hpp>
+#include <boost/algorithm/string.hpp>
+#include <boost/algorithm/string/split.hpp>
+#include <boost/algorithm/string/classification.hpp>
 
 #include "indri/QueryEnvironment.hpp"
 #include "indri/Repository.hpp"
 #include "indri/CompressedCollection.hpp"
+#include "indri/ScopedLock.hpp"
 
 char* getOption(char ** begin, char ** end, const std::string & option) {
-	char ** itr = std::find(begin, end, option);
-	if (itr != end && ++itr != end) {
-		return *itr;
-	}
-	return 0;
+  char ** itr = std::find(begin, end, option);
+  if (itr != end && ++itr != end) {
+    return *itr;
+  }
+  return 0;
 }
 
 bool hasOption(char** begin, char** end, const std::string& option) {
-	return std::find(begin, end, option) != end;
+  return std::find(begin, end, option) != end;
+}
+
+void readParams(const char* paramFile, map<string, string> *params) {
+  ifstream file;
+  file.open(paramFile);
+
+  string line;
+  if (file.is_open()) {
+
+    while (getline(file, line)) {
+      char mutableLine[line.size() + 1];
+      std::strcpy(mutableLine, line.c_str());
+
+      char* key = std::strtok(mutableLine, "=");
+      char* value = std::strtok(NULL, "=");
+      (*params)[key] = value;
+
+      std::cout << line << endl;
+    }
+    file.close();
+  }
+}
+
+void openDb(const char* dbPath, Db* db, u_int32_t oFlags) {
+  try {
+    // Open the database
+    db->open(NULL, // Transaction pointer
+        dbPath, // Database file name
+        NULL, // Optional logical database name
+        DB_HASH, // Database access method
+        oFlags, // Open flags
+        0); // File mode (using defaults)
+  } catch (DbException &e) {
+    cerr << "Error opening DB. Exiting." << endl << e.what() << endl;
+    exit(EXIT_FAILURE);
+  } catch (std::exception &e) {
+    cerr << "Error opening DB. Exiting." << endl << e.what() << endl;
+    exit(EXIT_FAILURE);
+  }
+}
+
+void closeDb(Db* db) {
+  try {
+    db->close(0);
+  } catch (DbException &e) {
+    cerr << "Error while closing DB. Exiting." << endl << e.what() << endl;
+  } catch (std::exception &e) {
+    cerr << "Error while closing DB. Exiting." << endl << e.what() << endl;
+  }
 }
 
 int main(int argc, char * argv[]) {
-	boost::math::gamma_distribution<> my_gamma(1, 1);
-	boost::math::cdf(my_gamma, 0.5);
+  boost::math::gamma_distribution<> my_gamma(1, 1);
+  boost::math::cdf(my_gamma, 0.5);
 
-	if (strcmp(argv[1], "build") == 0) {
-		char* paramFile = getOption(argv, argv + argc, "-p");
+  char* paramFile = getOption(argv, argv + argc, "-p");
 
-		ifstream file;
-		file.open(paramFile);
+  // read parameter file
+  std::map<string, string> params;
+  readParams(paramFile, &params);
 
-		string line;
-		if (file.is_open()) {
-			while (getline(file, line)) {
+  if (strcmp(argv[1], "build") == 0) {
 
-				std::cout << line << endl;
-			}
-			file.close();
-		}
+    string dbPath = params["db"];
+    string indexPath = params["index"];
 
-		Db db(NULL, 0); // Instantiate the Db object
+    // create and open the data store
+    Db db(NULL, 0);
+    openDb(dbPath.c_str(), &db, DB_CREATE | DB_EXCL);
 
-		u_int32_t oFlags = DB_CREATE | DB_EXCL; // Open flags;
+    indri::collection::Repository repo;
+    repo.openRead(indexPath);
 
-		try {
-			// Open the database
-			db.open(NULL, // Transaction pointer
-					"taily_stats.db", // Database file name
-					NULL, // Optional logical database name
-					DB_HASH, // Database access method
-					oFlags, // Open flags
-					0); // File mode (using defaults)
-			// DbException is not subclassed from std::exception, so
-			// need to catch both of these.
-		} catch (DbException &e) {
-			// Error handling code goes here
-		} catch (std::exception &e) {
-			// Error handling code goes here
-		}
+    indri::collection::Repository::index_state state = repo.indexes();
 
+    for(size_t i = 0; i < state->size; i++) {
+      indri::index::Index* index = (*state)[i];
+      indri::thread::ScopedLock( index->iteratorLock() );
 
-		char *stem = "whoop#min";
-		float minval = 0.6;
+    }
 
-		Dbt key(stem, strlen(stem) + 1);
-		Dbt data(&minval, sizeof(float));
+    char *stem = (char*) "whoop#min";
+    float minval = 0.6;
 
-		int ret = db.put(NULL, &key, &data, DB_NOOVERWRITE);
-		if (ret == DB_KEYEXIST) {
-		    db.err(ret, "Put failed because key %s already exists",
-		                    stem);
-		}
+    Dbt key(stem, strlen(stem) + 1);
+    Dbt data(&minval, sizeof(float));
 
-		try {
-		    db.close(0);
-		} catch(DbException &e) {
-		} catch(std::exception &e) {
-		}
+    int ret = db.put(NULL, &key, &data, DB_NOOVERWRITE);
+    if (ret == DB_KEYEXIST) {
+      db.err(ret, "Put failed because key %s already exists", stem);
+    }
 
+    closeDb(&db);
 
-		indri::collection::Repository repo;
+  } else if (strcmp(argv[1], "run") == 0) {
+    // create and open db
+    Db db(NULL, 0);
+    openDb(params["db"].c_str(), &db, DB_RDONLY);
 
-	} else if (strcmp(argv[1], "run") == 0) {
-		Db db(NULL, 0); // Instantiate the Db object
-		u_int32_t oFlags = DB_RDONLY;
-		try {
-			// Open the database
-			db.open(NULL, // Transaction pointer
-					"taily_stats.db", // Database file name
-					NULL, // Optional logical database name
-					DB_HASH, // Database access method
-					oFlags, // Open flags
-					0); // File mode (using defaults)
-			// DbException is not subclassed from std::exception, so
-			// need to catch both of these.
-		} catch (DbException &e) {
-			// Error handling code goes here
-		} catch (std::exception &e) {
-			// Error handling code goes here
-		}
+    char *stem = (char*) "whoop#min";
+    float minval;
 
+    Dbt key, data;
 
-		char *stem = "whoop#min";
-		float minval;
+    key.set_data(stem);
+    key.set_size(strlen(stem) + 1);
 
-		Dbt key, data;
+    data.set_data(&minval);
+    data.set_ulen(sizeof(float));
+    data.set_flags(DB_DBT_USERMEM);
 
-		key.set_data(stem);
-		key.set_size(strlen(stem)+1);
+    db.get(NULL, &key, &data, 0);
 
-		data.set_data(&minval);
-		data.set_ulen(sizeof(float));
-		data.set_flags(DB_DBT_USERMEM);
+    std::cout << "Data is " << minval << std::endl;
 
-		db.get(NULL, &key, &data, 0);
+    closeDb(&db);
 
-		std::cout << "Data is " << minval << std::endl;
+  } else {
+    std::cout << "Unrecognized option." << std::endl;
+  }
 
-		try {
-		    db.close(0);
-		} catch(DbException &e) {
-		} catch(std::exception &e) {
-		}
+  puts("Hello World!!!");
 
-
-	} else {
-		std::cout << "Unrecognized option." << std::endl;
-	}
-
-	puts("Hello World!!!");
-
-	return EXIT_SUCCESS;
+  return EXIT_SUCCESS;
 }
