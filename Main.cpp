@@ -75,7 +75,13 @@ void closeDb(Db* db) {
   }
 }
 
+float calcIndriFeature(float tf, float ctf, float totalTermCount, float docLength, int mu = 2500) {
+  return log( (tf + mu*(ctf/totalTermCount)) / (docLength + mu) );
+}
+
 int main(int argc, char * argv[]) {
+  int MU = 2500;
+
   boost::math::gamma_distribution<> my_gamma(1, 1);
   boost::math::cdf(my_gamma, 0.5);
 
@@ -99,9 +105,62 @@ int main(int argc, char * argv[]) {
 
     indri::collection::Repository::index_state state = repo.indexes();
 
-    for(size_t i = 0; i < state->size; i++) {
-      indri::index::Index* index = (*state)[i];
+    if (state->size() > 1) {
+      cout << "Index has more than 1 part. Can't deal with this, man.";
+      exit(EXIT_FAILURE);
+    }
+
+
+    for(size_t i = 0; i < state->size(); i++) {
+
+      using namespace indri::index;
+      Index* index = (*state)[i];
       indri::thread::ScopedLock( index->iteratorLock() );
+
+      DocListFileIterator* iter = index->docListFileIterator();
+      iter->startIteration();
+      cout << index->termCount() << " " << index->documentCount() << endl;
+
+      float totalTermCount = index->termCount();
+
+      while (!iter->finished()) {
+        DocListFileIterator::DocListData* entry = iter->currentEntry();
+        TermData* termData = entry->termData;
+        float ctf = termData->corpus.totalCount;
+
+        double featSum = 0.0f;
+        double squaredFeatSum = 0.0f;
+
+        entry->iterator->startIteration();
+
+        while (!entry->iterator->finished()) {
+          DocListIterator::DocumentData* doc = entry->iterator->currentEntry();
+          float length = index->documentLength(doc->document);
+          float tf = doc->positions.size();
+
+          // calulate Indri score feature and sum it up
+          featSum += calcIndriFeature(tf, ctf, totalTermCount, length);
+          squaredFeatSum += pow(calcIndriFeature(tf, ctf, totalTermCount, length), 2);
+
+          entry->iterator->nextEntry();
+        }
+        featSum /= ctf;
+        squaredFeatSum /= ctf;
+
+        float var = squaredFeatSum - pow(featSum, 2);
+
+        string featKey(termData->term);
+        featKey.append("#f");
+        string squaredFeatKey(termData->term);
+        squaredFeatKey.append("#f2");
+
+        string varKey(termData->term);
+        varKey.append("#v");
+
+
+        iter->nextEntry();
+      }
+      delete iter;
 
     }
 
