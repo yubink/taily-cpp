@@ -9,12 +9,14 @@
 #define SHARDRANKER_H_
 
 #include "FeatureStore.h"
+#include "indri/Repository.hpp"
 
 using namespace std;
 
 class ShardRanker {
 private:
   FeatureStore* stores;
+  indri::collection::Repository* repo;
 
 public:
   ShardRanker();
