@@ -19,12 +19,14 @@ using namespace std;
 class FeatureStore {
 
 private:
-  Db freqDb; // db storing frequent terms; see FREQUENT_TERMS
-  Db infreqDb; // db storing infrequent terms
+  Db _freqDb; // db storing frequent terms; see FREQUENT_TERMS
+  Db _infreqDb; // db storing infrequent terms
 
 public:
   static const char* FEAT_SUFFIX;
   static const char* SQUARED_FEAT_SUFFIX;
+  static const char* MIN_FEAT_SUFFIX;
+  static const char* SIZE_FEAT_SUFFIX;
   static const int FREQUENT_TERMS = 1000; // tf required for a term to be considered "frequent"
 
 public:

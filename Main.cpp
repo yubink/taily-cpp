@@ -57,9 +57,6 @@ float calcIndriFeature(float tf, float ctf, float totalTermCount, float docLengt
 int main(int argc, char * argv[]) {
   int MU = 2500;
 
-  boost::math::gamma_distribution<> my_gamma(1, 1);
-  boost::math::cdf(my_gamma, 0.5);
-
   char* paramFile = getOption(argv, argv + argc, "-p");
 
   // read parameter file
@@ -94,18 +91,27 @@ int main(int argc, char * argv[]) {
       iter->startIteration();
       cout << index->termCount() << " " << index->documentCount() << endl;
 
+      // get the total term length of shard
       float totalTermCount = index->termCount();
 
+      // store the shard size (# of docs) feature
+      int shardSizeFeat = index->documentCount();
+      string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
+      store.putFeature((char*)featSize.c_str(), (float)shardSizeFeat, shardSizeFeat);
+
+      // for each stem in the index
       while (!iter->finished()) {
         DocListFileIterator::DocListData* entry = iter->currentEntry();
         TermData* termData = entry->termData;
         int ctf = termData->corpus.totalCount;
+        int df = termData->corpus.documentCount;
 
         double featSum = 0.0f;
         double squaredFeatSum = 0.0f;
 
         entry->iterator->startIteration();
 
+        // calculate E[f] and E[f^2] eq (3) (4)
         while (!entry->iterator->finished()) {
           DocListIterator::DocumentData* doc = entry->iterator->currentEntry();
           float length = index->documentLength(doc->document);
@@ -117,13 +123,20 @@ int main(int argc, char * argv[]) {
 
           entry->iterator->nextEntry();
         }
-        featSum /= ctf;
-        squaredFeatSum /= ctf;
+        featSum /= df;
+        squaredFeatSum /= df;
 
+        // store df feature for term
+        string dfFeatKey(termData->term);
+        dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
+        store.putFeature((char*)dfFeatKey.c_str(), df, ctf);
+
+        // store E[f]
         string featKey(termData->term);
         featKey.append(FeatureStore::FEAT_SUFFIX);
         store.putFeature((char*) featKey.c_str(), featSum, ctf);
 
+        // store E[f^2]
         string squaredFeatKey(termData->term);
         squaredFeatKey.append(FeatureStore::SQUARED_FEAT_SUFFIX);
         store.putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, ctf);
@@ -133,7 +146,6 @@ int main(int argc, char * argv[]) {
       delete iter;
 
     }
-
   } else if (strcmp(argv[1], "run") == 0) {
     // create and open db
     FeatureStore store(params["db"], true);

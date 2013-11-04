@@ -11,21 +11,22 @@ using namespace std;
 
 const char* FeatureStore::FEAT_SUFFIX = "#f";
 const char* FeatureStore::SQUARED_FEAT_SUFFIX = "#f2";
+const char* FeatureStore::MIN_FEAT_SUFFIX = "#m";
+const char* FeatureStore::SIZE_FEAT_SUFFIX = "#s";
 
-
-FeatureStore::FeatureStore(string dir, bool readOnly = false) : freqDb(NULL, 0), infreqDb(NULL, 0) {
+FeatureStore::FeatureStore(string dir, bool readOnly = false) : _freqDb(NULL, 0), _infreqDb(NULL, 0) {
   string freqPath = dir + "/freq.db";
   string infreqPath = dir + "/infreq.db";
 
   u_int32_t flags = readOnly ? DB_RDONLY : DB_CREATE | DB_EXCL;
 
-  _openDb(freqPath.c_str(), &freqDb, flags);
-  _openDb(infreqPath.c_str(), &infreqDb, flags);
+  _openDb(freqPath.c_str(), &_freqDb, flags);
+  _openDb(infreqPath.c_str(), &_infreqDb, flags);
 }
 
 FeatureStore::~FeatureStore() {
-  _closeDb(&freqDb);
-  _closeDb(&infreqDb);
+  _closeDb(&_freqDb);
+  _closeDb(&_infreqDb);
 }
 
 int FeatureStore::getFeature(char* keyStr, float* val) {
@@ -38,10 +39,10 @@ int FeatureStore::getFeature(char* keyStr, float* val) {
   data.set_ulen(sizeof(float));
   data.set_flags(DB_DBT_USERMEM);
 
-  int retval = freqDb.get(NULL, &key, &data, 0);
+  int retval = _freqDb.get(NULL, &key, &data, 0);
 
   if (retval == DB_NOTFOUND) {
-    retval = infreqDb.get(NULL, &key, &data, 0);
+    retval = _infreqDb.get(NULL, &key, &data, 0);
     if (retval == DB_NOTFOUND) {
       return 1;
     }
@@ -56,9 +57,9 @@ void FeatureStore::putFeature(char* stem, float val, int frequency) {
 
   Db* db;
   if (frequency >= FREQUENT_TERMS) {
-    db = &freqDb;
+    db = &_freqDb;
   } else {
-    db = &infreqDb;
+    db = &_infreqDb;
   }
 
   int ret = db->put(NULL, &key, &data, DB_NOOVERWRITE);
