@@ -29,20 +29,20 @@ private:
   uint _n_c;
 
   // retrieves the mean/variance for query terms and fills in the given queryMean/queryVar arrays
-  void _getQueryFeats(vector<string>& stems, float* queryMean, float* queryVar);
+  void _getQueryFeats(vector<string>& stems, double* queryMean, double* queryVar);
 
   // tokenizes, stems and stops query term into output vector
   void _getStems(string query, vector<string>* output);
 
   // calculates All from Eq (10)
-  void _getAll(vector<string>& stems, float* all);
+  void _getAll(vector<string>& stems, double* all);
 
 public:
   ShardRanker();
   virtual ~ShardRanker();
 
   void init();
-  void rank(string query, vector<pair<int, float> >* ranking);
+  void rank(string query, vector<pair<int, double> >* ranking);
 };
 
 #endif /* SHARDRANKER_H_ */

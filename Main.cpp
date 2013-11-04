@@ -50,7 +50,7 @@ void readParams(const char* paramFile, map<string, string> *params) {
 }
 
 
-float calcIndriFeature(float tf, float ctf, float totalTermCount, float docLength, int mu = 2500) {
+double calcIndriFeature(double tf, double ctf, double totalTermCount, double docLength, int mu = 2500) {
   return log( (tf + mu*(ctf/totalTermCount)) / (docLength + mu) );
 }
 
@@ -69,7 +69,6 @@ int main(int argc, char * argv[]) {
     string indexPath = params["index"];
 
     // create and open the data store
-
     FeatureStore store(dbPath, false);
 
     indri::collection::Repository repo;
@@ -92,12 +91,12 @@ int main(int argc, char * argv[]) {
       cout << index->termCount() << " " << index->documentCount() << endl;
 
       // get the total term length of shard
-      float totalTermCount = index->termCount();
+      double totalTermCount = index->termCount();
 
       // store the shard size (# of docs) feature
       int shardSizeFeat = index->documentCount();
       string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
-      store.putFeature((char*)featSize.c_str(), (float)shardSizeFeat, shardSizeFeat);
+      store.putFeature((char*)featSize.c_str(), (double)shardSizeFeat, shardSizeFeat);
 
       // for each stem in the index
       while (!iter->finished()) {
@@ -114,12 +113,13 @@ int main(int argc, char * argv[]) {
         // calculate E[f] and E[f^2] eq (3) (4)
         while (!entry->iterator->finished()) {
           DocListIterator::DocumentData* doc = entry->iterator->currentEntry();
-          float length = index->documentLength(doc->document);
-          float tf = doc->positions.size();
+          double length = index->documentLength(doc->document);
+          double tf = doc->positions.size();
 
           // calulate Indri score feature and sum it up
-          featSum += calcIndriFeature(tf, ctf, totalTermCount, length);
-          squaredFeatSum += pow(calcIndriFeature(tf, ctf, totalTermCount, length), 2);
+          double feat = calcIndriFeature(tf, ctf, totalTermCount, length);
+          featSum += feat;
+          squaredFeatSum += pow(feat, 2);
 
           entry->iterator->nextEntry();
         }
@@ -146,12 +146,148 @@ int main(int argc, char * argv[]) {
       delete iter;
 
     }
+  } else if (strcmp(argv[1], "buildall") == 0) {
+    using namespace indri::collection;
+    using namespace indri::index;
+
+    string dbPath = params["db"];
+    string indexstr = params["index"];
+
+    FeatureStore store(dbPath, false);
+    vector<Repository*> indexes;
+
+    char mutableLine[indexstr.size() + 1];
+    std::strcpy(mutableLine, indexstr.c_str());
+    char* value = std::strtok(mutableLine, " ");
+
+    // get all shard indexes and add to vector
+    while (value != NULL) {
+      value = std::strtok(NULL, ":");
+      indexes.push_back(new Repository());
+      (*indexes.end())->openRead(value);
+    }
+
+    // go through all indexes and collect ctf and df statistics.
+    long totalTermCount = 0;
+    long totalDocCount = 0;
+
+    vector<Repository*>::iterator it;
+    for (it = indexes.begin(); it != indexes.end(); ++it) {
+
+      // if it has more than one index, quit
+      Repository::index_state state = (*it)->indexes();
+      if (state->size() > 1) {
+        cout << "Index has more than 1 part. Can't deal with this, man.";
+        exit(EXIT_FAILURE);
+      }
+      Index* index = (*state)[0];
+      DocListFileIterator* iter = index->docListFileIterator();
+      iter->startIteration();
+
+      // add the total term length of shard
+      totalTermCount += index->termCount();
+      // add the shard size (# of docs)
+      totalDocCount += index->documentCount();
+
+      // go through all terms in the index and collect df/ctf
+      while (!iter->finished()) {
+        DocListFileIterator::DocListData* entry = iter->currentEntry();
+        TermData* termData = entry->termData;
+        int ctf = termData->corpus.totalCount;
+        int df = termData->corpus.documentCount;
+
+        // store df feature for term
+        string dfFeatKey(termData->term);
+        dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
+        store.addValFeature((char*)dfFeatKey.c_str(), df, ctf);
+
+        // store ctf feature for term
+        string ctfFeatKey(termData->term);
+        ctfFeatKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+        store.addValFeature((char*)dfFeatKey.c_str(), df, ctf);
+
+        iter->nextEntry();
+      }
+      delete iter;
+    }
+
+    // add collection global features needed for shard ranking
+    string totalTermKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+    store.putFeature((char*)totalTermKey.c_str(), totalTermCount, FeatureStore::FREQUENT_TERMS+1);
+    string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
+    store.putFeature((char*)featSize.c_str(), totalDocCount, FeatureStore::FREQUENT_TERMS+1);
+
+    // iterate through the database for all terms and calculate features
+    FeatureStore::TermIterator* termit = store.getTermIterator();
+    while (!termit->finished()) {
+      // get a stem and its df
+      pair<string,double> termAndDf = termit->currrentEntry();
+      string stem = termAndDf.first;
+      double df = termAndDf.second;
+
+      // retrieve the stem's ctf
+      double ctf;
+      string ctfKey(stem);
+      ctfKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+      store.getFeature((char*) ctfKey.c_str(), &ctf);
+
+      double featSum = 0.0f;
+      double squaredFeatSum = 0.0f;
+      double minFeat = DBL_MAX;
+
+      for (it = indexes.begin(); it != indexes.end(); ++it) {
+        Repository::index_state state = (*it)->indexes();
+        Index* index = (*state)[0];
+
+        DocListIterator* iter = index->docListIterator(termAndDf.first);
+        iter->startIteration();
+        while (!iter->finished()) {
+          DocListIterator::DocumentData* doc = iter->currentEntry();
+
+          double length = index->documentLength(doc->document);
+          double tf = doc->positions.size();
+
+          // calulate Indri score feature and sum it up
+          double feat = calcIndriFeature(tf, ctf, totalTermCount, length);
+          if (feat < minFeat) {
+            minFeat = feat;
+          }
+
+          featSum += feat;
+          squaredFeatSum += pow(feat, 2);
+
+          iter->nextEntry();
+        }
+        delete iter;
+      }
+      featSum /= df;
+      squaredFeatSum /= df;
+
+      // store min feature for term
+      string minFeatKey(stem);
+      minFeatKey.append(FeatureStore::MIN_FEAT_SUFFIX);
+      store.putFeature((char*)minFeatKey.c_str(), minFeat, ctf);
+
+      // store E[f]
+      string featKey(stem);
+      featKey.append(FeatureStore::FEAT_SUFFIX);
+      store.putFeature((char*) featKey.c_str(), featSum, ctf);
+
+      // store E[f^2]
+      string squaredFeatKey(stem);
+      squaredFeatKey.append(FeatureStore::SQUARED_FEAT_SUFFIX);
+      store.putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, ctf);
+
+      termit->nextTerm();
+    }
+    delete termit;
+
   } else if (strcmp(argv[1], "run") == 0) {
     // create and open db
     FeatureStore store(params["db"], true);
 
     char *stem = (char*) "whoop#min";
-    float minval;
+    double minval;
     std::cout << "Data is " << minval << std::endl;
 
 

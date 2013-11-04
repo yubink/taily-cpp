@@ -36,7 +36,7 @@ void ShardRanker::_getStems(string query, vector<string>* output) {
   }
 }
 
-void ShardRanker::_getQueryFeats(vector<string>& stems, float* queryMean, float* queryVar) {
+void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean, double* queryVar) {
   // calculate mean and variances for query for all shards
   vector<string>::iterator it;
 
@@ -44,21 +44,21 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, float* queryMean, float*
     string stem = (*it);
 
     // get minimum doc feature value for this stem
-    float minVal;
+    double minVal;
     string minFeat(stem);
     minFeat.append(FeatureStore::MIN_FEAT_SUFFIX);
     _stores[0]->getFeature((char*)minFeat.c_str(), &minVal);
 
     for(uint i = 0; i <= _numShards; i++) {
       // add current term's mean to shard; also shift by min feat value Eq (5)
-      float mean;
+      double mean;
       string meanFeat(stem);
       meanFeat.append(FeatureStore::FEAT_SUFFIX);
       _stores[i]->getFeature((char*)meanFeat.c_str(), &mean);
       queryMean[i] += mean - minVal;
 
       // add current term's variance to shard Eq (6)
-      float f2;
+      double f2;
       string f2Feat(stem);
       f2Feat.append(FeatureStore::SQUARED_FEAT_SUFFIX);
       _stores[i]->getFeature((char*)f2Feat.c_str(), &f2);
@@ -67,9 +67,9 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, float* queryMean, float*
   }
 }
 
-void ShardRanker::_getAll(vector<string>& stems, float* all) {
+void ShardRanker::_getAll(vector<string>& stems, double* all) {
   // calculate Any_i & all_i
-   float any[_numShards+1];
+   double any[_numShards+1];
    string sizeKey(FeatureStore::SIZE_FEAT_SUFFIX);
 
    for (int i = 0; i < _numShards+1; i++) {
@@ -78,17 +78,17 @@ void ShardRanker::_getAll(vector<string>& stems, float* all) {
      all[i] = 0.0;
 
      // get size of current shard
-     float shardSize;
+     double shardSize;
      _stores[i]->getFeature((char*)sizeKey.c_str(), &shardSize);
 
      // for each query term, calculate inner bracket of any_i equation
      vector<string>::iterator it;
-     float dfs[stems.size()];
+     double dfs[stems.size()];
      int dfCnt = 0;
      for(it = stems.begin(); it != stems.end(); ++it) {
        string stem(*it);
        stem.append(FeatureStore::SIZE_FEAT_SUFFIX);
-       float df;
+       double df;
        _stores[i]->getFeature((char*)stem.c_str(), &df);
 
        // smooth it
@@ -112,11 +112,11 @@ void ShardRanker::_getAll(vector<string>& stems, float* all) {
    }
 }
 
-bool shardPairSort (pair<int, float> i, pair<int,float> j) { return (i.second < j.second); }
+bool shardPairSort (pair<int, double> i, pair<int,double> j) { return (i.second < j.second); }
 
-void ShardRanker::rank(string query, vector<pair<int, float> >* ranking) {
-  float queryMean[_numShards+1];
-  float queryVar[_numShards+1];
+void ShardRanker::rank(string query, vector<pair<int, double> >* ranking) {
+  double queryMean[_numShards+1];
+  double queryVar[_numShards+1];
 
   // query total means and variances for each shard
   for (int i = 0; i < _numShards+1; i++) {
@@ -127,8 +127,8 @@ void ShardRanker::rank(string query, vector<pair<int, float> >* ranking) {
   _getQueryFeats(stems, queryMean, queryVar);
 
   // calculate k and theta from mean/vars Eq (7) (8)
-  float k[_numShards+1];
-  float theta[_numShards+1];
+  double k[_numShards+1];
+  double theta[_numShards+1];
 
   for (int i = 0; i < _numShards+1; i++) {
     k[i] = pow(queryMean[i], 2) / queryVar[i];
@@ -136,21 +136,21 @@ void ShardRanker::rank(string query, vector<pair<int, float> >* ranking) {
   }
 
   // all from Eq (10)
-  float all[_numShards+1];
+  double all[_numShards+1];
   for (int i = 0; i < _numShards+1; i++) {
     all[i] = 0.0;
   }
   _getAll(stems, all);
 
   // calculate s_c from inline equation after Eq (11)
-  float p_c = _n_c / all[0];
+  double p_c = _n_c / all[0];
   boost::math::gamma_distribution<> collectionGamma(k[0], theta[0]);
-  float s_c = boost::math::quantile(complement(collectionGamma, p_c));
+  double s_c = boost::math::quantile(complement(collectionGamma, p_c));
 
   // calculate n_i for all shards and store it in ranking vector so we can sort (unnormalized)
   for (int i = 1; i < _numShards+1; i++) {
     boost::math::gamma_distribution<> shardGamma(k[i], theta[i]);
-    float p_i = boost::math::cdf(complement(shardGamma, s_c));
+    double p_i = boost::math::cdf(complement(shardGamma, s_c));
     ranking->push_back(make_pair(i, all[i]*p_i));
   }
 
@@ -158,14 +158,14 @@ void ShardRanker::rank(string query, vector<pair<int, float> >* ranking) {
   sort(ranking->begin(), ranking->end(), shardPairSort);
 
   // get normalization factor (top 5 shards sufficient)
-  float sum = 0.0;
+  double sum = 0.0;
   for (uint i = 0; i < min(5u, ranking->size()); i++) {
     sum += (*ranking)[i].second;
   }
-  float norm = _n_c/sum;
+  double norm = _n_c/sum;
 
   // renormalize shard scores Eq (12)
-  vector<pair<int, float> >::iterator nit;
+  vector<pair<int, double> >::iterator nit;
   for (nit = ranking->begin(); nit != ranking->end(); ++nit) {
     (*nit).second = (*nit).second * norm;
   }
