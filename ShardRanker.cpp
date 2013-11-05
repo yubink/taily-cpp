@@ -164,7 +164,7 @@ void ShardRanker::rank(string query, vector<pair<int, double> >* ranking) {
 
   // get normalization factor (top 5 shards sufficient)
   double sum = 0.0;
-  for (uint i = 0; i < min(5u, ranking->size()); i++) {
+  for (uint i = 0; i < min(5, (int)ranking->size()); i++) {
     sum += (*ranking)[i].second;
   }
   double norm = _n_c/sum;

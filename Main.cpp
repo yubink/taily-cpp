@@ -58,9 +58,9 @@ double calcIndriFeature(double tf, double ctf, double totalTermCount, double doc
 void tokenize(string line, const char * delim, vector<string>* output) {
   char mutableLine[line.size() + 1];
   std::strcpy(mutableLine, line.c_str());
-  char* value = std::strtok(mutableLine, delim);
-  while (value != NULL) {
-    value = std::strtok(NULL, delim);
+  for (char* value = std::strtok(mutableLine, delim); 
+      value != NULL; 
+      value = std::strtok(NULL, delim)) {
     output->push_back(value);
   }
 }
@@ -169,13 +169,14 @@ int main(int argc, char * argv[]) {
 
     char mutableLine[indexstr.size() + 1];
     std::strcpy(mutableLine, indexstr.c_str());
-    char* value = std::strtok(mutableLine, ":");
 
     // get all shard indexes and add to vector
-    while (value != NULL) {
-      value = std::strtok(NULL, ":");
-      indexes.push_back(new Repository());
-      (*indexes.end())->openRead(value);
+    for (char* value = std::strtok(mutableLine, ":"); 
+        value != NULL; 
+        value = std::strtok(NULL, ":")) {
+      Repository* repo = new Repository();
+      repo->openRead(value);
+      indexes.push_back(repo);
     }
 
     // go through all indexes and collect ctf and df statistics.
@@ -277,17 +278,17 @@ int main(int argc, char * argv[]) {
       // store min feature for term
       string minFeatKey(stem);
       minFeatKey.append(FeatureStore::MIN_FEAT_SUFFIX);
-      store.putFeature((char*)minFeatKey.c_str(), minFeat, ctf);
+      store.putFeature((char*)minFeatKey.c_str(), minFeat, (int)ctf);
 
       // store E[f]
       string featKey(stem);
       featKey.append(FeatureStore::FEAT_SUFFIX);
-      store.putFeature((char*) featKey.c_str(), featSum, ctf);
+      store.putFeature((char*) featKey.c_str(), featSum, (int)ctf);
 
       // store E[f^2]
       string squaredFeatKey(stem);
       squaredFeatKey.append(FeatureStore::SQUARED_FEAT_SUFFIX);
-      store.putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, ctf);
+      store.putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, (int)ctf);
 
       termit->nextTerm();
     }
@@ -341,6 +342,40 @@ int main(int argc, char * argv[]) {
 
   } else {
     std::cout << "Unrecognized option." << std::endl;
+    string dbPath = params["db"];
+    string indexPath = params["index"];
+
+    // create and open the data store
+    FeatureStore store(dbPath, true);
+    
+    double val;
+    cout << "love ";
+    store.getFeature((char*)"love#f", &val);
+    cout << val << " " ;
+    store.getFeature((char*)"love#f2", &val);
+    cout << val << endl;
+
+    cout << "and ";
+    store.getFeature((char*)"and#f", &val);
+    cout << val << " " ;
+    store.getFeature((char*)"and#f2", &val);
+    cout << val << endl;
+
+    cout << "orange ";
+    store.getFeature((char*)"orange#f", &val);
+    cout << val << " " ;
+    store.getFeature((char*)"orange#d", &val);
+    cout << val << " " ;
+    store.getFeature((char*)"orange#f2", &val);
+    cout << val << endl;
+
+    cout << "apple ";
+    store.getFeature((char*)"apple#f", &val);
+    cout << val << " " ;
+    store.getFeature((char*)"apple#d", &val);
+    cout << val << " " ;
+    store.getFeature((char*)"apple#f2", &val);
+    cout << val << endl;
   }
 
   puts("Hello World!!!");
