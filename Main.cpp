@@ -74,10 +74,14 @@ int main(int argc, char * argv[]) {
   std::map<string, string> params;
   readParams(paramFile, &params);
 
-  if (strcmp(argv[1], "build") == 0) {
+  if (strcmp(argv[1], "buildshard") == 0) {
 
     string dbPath = params["db"];
     string indexPath = params["index"];
+    string corpusDbPath = params["corpusDb"];
+
+    // open corpus statistics db
+    FeatureStore corpusStats(corpusDbPath, true);
 
     // create and open the data store
     FeatureStore store(dbPath, false);
@@ -101,8 +105,10 @@ int main(int argc, char * argv[]) {
       iter->startIteration();
       cout << index->termCount() << " " << index->documentCount() << endl;
 
-      // get the total term length of shard
+      // get the total term length of the collection (for Indri scoring)
       double totalTermCount = index->termCount();
+      string totalTermCountKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+      corpusStats.getFeature((char*)totalTermCountKey.c_str(), &totalTermCount);
 
       // store the shard size (# of docs) feature
       int shardSizeFeat = index->documentCount();
@@ -113,15 +119,20 @@ int main(int argc, char * argv[]) {
       while (!iter->finished()) {
         DocListFileIterator::DocListData* entry = iter->currentEntry();
         TermData* termData = entry->termData;
-        int ctf = termData->corpus.totalCount;
-        int df = termData->corpus.documentCount;
+
+        // get ctf of term from corpus-wide stats Db
+        double ctf;
+        string ctfKey(termData->term);
+        ctfKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+        corpusStats.getFeature((char*)ctfKey.c_str(), &ctf);
 
         double featSum = 0.0f;
         double squaredFeatSum = 0.0f;
+        double minFeat = DBL_MAX;
 
         entry->iterator->startIteration();
 
-        // calculate E[f] and E[f^2] eq (3) (4)
+        // calculate Sum(f) and Sum(f^2) top parts of eq (3) (4)
         while (!entry->iterator->finished()) {
           DocListIterator::DocumentData* doc = entry->iterator->currentEntry();
           double length = index->documentLength(doc->document);
@@ -132,32 +143,39 @@ int main(int argc, char * argv[]) {
           featSum += feat;
           squaredFeatSum += pow(feat, 2);
 
+          // keep track of this shard's minimum feature
+          if (feat < minFeat) {
+            minFeat = feat;
+          }
           entry->iterator->nextEntry();
         }
-//        featSum /= df;
-//        squaredFeatSum /= df;
+        // store min feature for term (for this shard; will later be merged into corpus-wide Db)
+        string minFeatKey(termData->term);
+        minFeatKey.append(FeatureStore::MIN_FEAT_SUFFIX);
+        store.putFeature((char*)minFeatKey.c_str(), minFeat, (int)ctf);
 
-        // store df feature for term
+        // get and store shard df feature for term
+        double shardDf = termData->corpus.documentCount;
         string dfFeatKey(termData->term);
         dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
-        store.putFeature((char*)dfFeatKey.c_str(), df, ctf);
+        store.putFeature((char*)dfFeatKey.c_str(), shardDf, (int)ctf);
 
         // store sum f
         string featKey(termData->term);
         featKey.append(FeatureStore::FEAT_SUFFIX);
-        store.putFeature((char*) featKey.c_str(), featSum, ctf);
+        store.putFeature((char*) featKey.c_str(), featSum, (int)ctf);
 
         // store sum f^2
         string squaredFeatKey(termData->term);
         squaredFeatKey.append(FeatureStore::SQUARED_FEAT_SUFFIX);
-        store.putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, ctf);
+        store.putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, (int)ctf);
 
         iter->nextEntry();
       }
       delete iter;
 
     }
-  } else if (strcmp(argv[1], "buildall") == 0) {
+  } else if (strcmp(argv[1], "buildcorpus") == 0) {
     using namespace indri::collection;
     using namespace indri::index;
 
@@ -229,75 +247,55 @@ int main(int argc, char * argv[]) {
     string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
     store.putFeature((char*)featSize.c_str(), totalDocCount, FeatureStore::FREQUENT_TERMS+1);
 
-    // iterate through the database for all terms and calculate features
-    FeatureStore::TermIterator* termit = store.getTermIterator();
+  } else if (strcmp(argv[1], "mergemin") == 0) {
+    string dbstr = params["db"];
+    string index = params["index"];
+
+    // get list of shard statistic dbs
+    vector<string> dbs;
+    tokenize(dbstr, ":", &dbs);
+
+    // open dbs for the corpus store and each shard store
+    FeatureStore corpusStore(dbs[0], false);
+    vector<FeatureStore*> stores;
+    for (uint i = 1; i < dbs.size(); i++) {
+      stores.push_back(new FeatureStore(dbs[i], true));
+    }
+
+    // iterate through the database for all terms and find gloabl min feature
+    FeatureStore::TermIterator* termit = corpusStore.getTermIterator();
     while (!termit->finished()) {
-      // get a stem and its df
-      pair<string,double> termAndDf = termit->currrentEntry();
-      string stem = termAndDf.first;
-      double df = termAndDf.second;
+      // get a stem and its ctf
+      pair<string,double> termAndCtf = termit->currrentEntry();
+      string stem = termAndCtf.first;
+      double ctf = termAndCtf.second;
 
-      // retrieve the stem's ctf
-      double ctf;
-      string ctfKey(stem);
-      ctfKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-      store.getFeature((char*) ctfKey.c_str(), &ctf);
-
-      double featSum = 0.0f;
-      double squaredFeatSum = 0.0f;
-      double minFeat = DBL_MAX;
-
-      for (it = indexes.begin(); it != indexes.end(); ++it) {
-        Repository::index_state state = (*it)->indexes();
-        Index* index = (*state)[0];
-
-        // go through all docs in index containing term
-        DocListIterator* iter = index->docListIterator(termAndDf.first);
-
-        // this index doesn't have this term; skip
-        if (iter == NULL) continue;
-
-        iter->startIteration();
-        while (!iter->finished()) {
-          DocListIterator::DocumentData* doc = iter->currentEntry();
-
-          double length = index->documentLength(doc->document);
-          double tf = doc->positions.size();
-
-          // calulate Indri score feature and sum it up
-          double feat = calcIndriFeature(tf, ctf, totalTermCount, length);
-          if (feat < minFeat) {
-            minFeat = feat;
-          }
-
-          featSum += feat;
-          squaredFeatSum += pow(feat, 2);
-
-          iter->nextEntry();
-        }
-        delete iter;
-      }
-      featSum /= df;
-      squaredFeatSum /= df;
-
-      // store min feature for term
+      // keep track of min feature
+      double globalMin = DBL_MAX;
       string minFeatKey(stem);
       minFeatKey.append(FeatureStore::MIN_FEAT_SUFFIX);
-      store.putFeature((char*)minFeatKey.c_str(), minFeat, (int)ctf);
 
-      // store E[f]
-      string featKey(stem);
-      featKey.append(FeatureStore::FEAT_SUFFIX);
-      store.putFeature((char*) featKey.c_str(), featSum, (int)ctf);
+      // for each shard, grab the share min feature from its stats db and find global min
+      vector<FeatureStore*>::iterator it;
+      for (it = stores.begin(); it != stores.end(); ++it) {
+        double currMin;
+        (*it)->getFeature((char*)minFeatKey.c_str(), &currMin);
+        if (currMin < globalMin) {
+          globalMin = currMin;
+        }
+      }
 
-      // store E[f^2]
-      string squaredFeatKey(stem);
-      squaredFeatKey.append(FeatureStore::SQUARED_FEAT_SUFFIX);
-      store.putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, (int)ctf);
+      // store min feature for term
+      corpusStore.putFeature((char*)minFeatKey.c_str(), globalMin, (int)ctf);
 
       termit->nextTerm();
     }
     delete termit;
+
+    vector<FeatureStore*>::iterator it;
+    for (it = stores.begin(); it != stores.end(); ++it) {
+      delete (*it);
+    }
 
   } else if (strcmp(argv[1], "run") == 0) {
     using namespace indri::collection;
@@ -344,7 +342,6 @@ int main(int argc, char * argv[]) {
       qfile.close();
     }
 
-  //FIXME: add a min merger option
   } else {
     std::cout << "Unrecognized option." << std::endl;
     string dbPath = params["db"];
@@ -368,13 +365,13 @@ int main(int argc, char * argv[]) {
 
     cout << "orange ";
     store.getFeature((char*)"orange#f", &val);
-    cout << val << " " ;
+    cout << "f "<< val << " " ;
     store.getFeature((char*)"orange#d", &val);
-    cout << val << " " ;
+    cout << "d "<< val << " " ;
     store.getFeature((char*)"orange#t", &val);
-    cout << val << " " ;
+    cout << "t "<< val << " " ;
     store.getFeature((char*)"orange#f2", &val);
-    cout << val << endl;
+    cout << "f2 "<< val << endl;
 
     cout << "apple ";
     store.getFeature((char*)"apple#f", &val);
@@ -394,8 +391,6 @@ int main(int argc, char * argv[]) {
     store.getFeature((char*)"#t", &val);
     cout << "size " << val << endl;
   }
-
-  puts("Hello World!!!");
 
   return EXIT_SUCCESS;
 }

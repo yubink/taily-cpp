@@ -2,3 +2,4 @@
 /taily_stats.db
 *.o
 *.swp
+.settings/*

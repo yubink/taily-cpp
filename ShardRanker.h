@@ -29,7 +29,8 @@ private:
   uint _n_c;
 
   // retrieves the mean/variance for query terms and fills in the given queryMean/queryVar arrays
-  void _getQueryFeats(vector<string>& stems, double* queryMean, double* queryVar);
+  // and marks shards that have at least one doc for one query term in given bool array
+  void _getQueryFeats(vector<string>& stems, double* queryMean, double* queryVar, bool* hasATerm);
 
   // tokenizes, stems and stops query term into output vector
   void _getStems(string query, vector<string>* output);

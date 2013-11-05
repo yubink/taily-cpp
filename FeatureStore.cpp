@@ -19,7 +19,7 @@ FeatureStore::FeatureStore(string dir, bool readOnly, DBTYPE type) : _freqDb(NUL
   string freqPath = dir + "/freq.db";
   string infreqPath = dir + "/infreq.db";
 
-  u_int32_t flags = readOnly ? DB_RDONLY : DB_CREATE | DB_EXCL;
+  u_int32_t flags = readOnly ? DB_RDONLY : DB_CREATE;
 
   _openDb(freqPath.c_str(), &_freqDb, flags, type);
   _openDb(infreqPath.c_str(), &_infreqDb, flags, type);
@@ -176,11 +176,11 @@ void FeatureStore::TermIterator::nextTerm() {
       }
     } else {
       string stemKey(keyStr);
-      size_t idx = stemKey.find(SIZE_FEAT_SUFFIX);
+      size_t idx = stemKey.find(TERM_SIZE_FEAT_SUFFIX);
 
-      // is it a stem df key value pair? (there is a #d key for the doc count of entire corpus)
+      // is it a stem ctf key value pair? (there is a #t key for the term count in entire corpus)
       if (idx != string::npos && idx != 0) {
-        string stem = stemKey.substr(0, stemKey.size() - strlen(SIZE_FEAT_SUFFIX));
+        string stem = stemKey.substr(0, stemKey.size() - strlen(TERM_SIZE_FEAT_SUFFIX));
         _current = make_pair(stem, val);
         break;
       }
