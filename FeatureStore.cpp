@@ -71,8 +71,13 @@ void FeatureStore::putFeature(char* stem, double val, int frequency, int flags) 
 
 void FeatureStore::addValFeature(char* keyStr, double val, int frequency) {
   double prevVal;
-  Dbt key(keyStr, strlen(keyStr) + 1);
-  Dbt data(&prevVal, sizeof(double));
+
+  Dbt key, data;
+  key.set_data(keyStr);
+  key.set_size(strlen(keyStr) + 1);
+
+  data.set_data(&prevVal);
+  data.set_ulen(sizeof(double));
   data.set_flags(DB_DBT_USERMEM);
 
   int retval = _freqDb.get(NULL, &key, &data, 0);
@@ -143,7 +148,8 @@ void FeatureStore::TermIterator::nextTerm() {
 
   Dbt key, data;
   key.set_data(keyStr);
-  key.set_size(MAX_TERM_SIZE+1);
+  key.set_ulen(MAX_TERM_SIZE+1);
+  key.set_flags(DB_DBT_USERMEM);
 
   data.set_data(&val);
   data.set_ulen(sizeof(double));
@@ -160,6 +166,7 @@ void FeatureStore::TermIterator::nextTerm() {
       if (cursor == _freqCursor) {
         _freqCursor->close();
         _freqCursor = NULL;
+        _infreqDb->cursor(NULL, &_infreqCursor, 0);
         cursor = _infreqCursor;
       } else {
         _finished = true;

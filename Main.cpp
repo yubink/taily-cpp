@@ -134,20 +134,20 @@ int main(int argc, char * argv[]) {
 
           entry->iterator->nextEntry();
         }
-        featSum /= df;
-        squaredFeatSum /= df;
+//        featSum /= df;
+//        squaredFeatSum /= df;
 
         // store df feature for term
         string dfFeatKey(termData->term);
         dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
         store.putFeature((char*)dfFeatKey.c_str(), df, ctf);
 
-        // store E[f]
+        // store sum f
         string featKey(termData->term);
         featKey.append(FeatureStore::FEAT_SUFFIX);
         store.putFeature((char*) featKey.c_str(), featSum, ctf);
 
-        // store E[f^2]
+        // store sum f^2
         string squaredFeatKey(termData->term);
         squaredFeatKey.append(FeatureStore::SQUARED_FEAT_SUFFIX);
         store.putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, ctf);
@@ -205,8 +205,8 @@ int main(int argc, char * argv[]) {
       while (!iter->finished()) {
         DocListFileIterator::DocListData* entry = iter->currentEntry();
         TermData* termData = entry->termData;
-        int ctf = termData->corpus.totalCount;
-        int df = termData->corpus.documentCount;
+        double ctf = termData->corpus.totalCount;
+        double df = termData->corpus.documentCount;
 
         // store df feature for term
         string dfFeatKey(termData->term);
@@ -216,7 +216,7 @@ int main(int argc, char * argv[]) {
         // store ctf feature for term
         string ctfFeatKey(termData->term);
         ctfFeatKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-        store.addValFeature((char*)dfFeatKey.c_str(), df, ctf);
+        store.addValFeature((char*)ctfFeatKey.c_str(), ctf, ctf);
 
         iter->nextEntry();
       }
@@ -251,7 +251,12 @@ int main(int argc, char * argv[]) {
         Repository::index_state state = (*it)->indexes();
         Index* index = (*state)[0];
 
+        // go through all docs in index containing term
         DocListIterator* iter = index->docListIterator(termAndDf.first);
+
+        // this index doesn't have this term; skip
+        if (iter == NULL) continue;
+
         iter->startIteration();
         while (!iter->finished()) {
           DocListIterator::DocumentData* doc = iter->currentEntry();
@@ -339,7 +344,7 @@ int main(int argc, char * argv[]) {
       qfile.close();
     }
 
-
+  //FIXME: add a min merger option
   } else {
     std::cout << "Unrecognized option." << std::endl;
     string dbPath = params["db"];
@@ -366,6 +371,8 @@ int main(int argc, char * argv[]) {
     cout << val << " " ;
     store.getFeature((char*)"orange#d", &val);
     cout << val << " " ;
+    store.getFeature((char*)"orange#t", &val);
+    cout << val << " " ;
     store.getFeature((char*)"orange#f2", &val);
     cout << val << endl;
 
@@ -374,8 +381,18 @@ int main(int argc, char * argv[]) {
     cout << val << " " ;
     store.getFeature((char*)"apple#d", &val);
     cout << val << " " ;
+    store.getFeature((char*)"apple#t", &val);
+    cout << val << " " ;
     store.getFeature((char*)"apple#f2", &val);
     cout << val << endl;
+
+    cout << "apple min ";
+    store.getFeature((char*)"apple#m", &val);
+    cout << val << endl ;
+    store.getFeature((char*)"#d", &val);
+    cout << "size " << val << " " ;
+    store.getFeature((char*)"#t", &val);
+    cout << "size " << val << endl;
   }
 
   puts("Hello World!!!");

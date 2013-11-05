@@ -12,7 +12,7 @@
 ShardRanker::ShardRanker(vector<string> dbPaths, indri::collection::Repository* repo,
     uint numShards, uint n_c) : _repo(repo), _numShards(numShards), _n_c(n_c) {
   for (uint i = 0; i < dbPaths.size(); i++) {
-    _stores.push_back(new FeatureStore(dbPaths[i]));
+    _stores.push_back(new FeatureStore(dbPaths[i], true));
   }
 }
 
@@ -26,11 +26,11 @@ ShardRanker::~ShardRanker() {
 void ShardRanker::_getStems(string query, vector<string>* output) {
   char mutableLine[query.size() + 1];
   std::strcpy(mutableLine, query.c_str());
-  char* value = std::strtok(mutableLine, " ");
 
-  while (value != NULL) {
+  for (char* value = std::strtok(mutableLine, " ");
+      value != NULL;
+      value = std::strtok(NULL, " ")) {
     // tokenize and stem/stop query
-    value = std::strtok(NULL, " ");
     string term(value);
     string stem = _repo->processTerm(term);
 
@@ -54,6 +54,8 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean, doubl
     minFeat.append(FeatureStore::MIN_FEAT_SUFFIX);
     _stores[0]->getFeature((char*)minFeat.c_str(), &minVal);
 
+    // FIXME: divide by df for mean/var
+    // FIXME: sum up to calculate collection-wide feature
     for(uint i = 0; i <= _numShards; i++) {
       // add current term's mean to shard; also shift by min feat value Eq (5)
       double mean;
