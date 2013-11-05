@@ -128,6 +128,15 @@ FeatureStore::TermIterator::TermIterator(Db* freqDb, Db* infreqDb): _freqDb(freq
   _freqDb->cursor(NULL, &_freqCursor, 0);
 }
 
+FeatureStore::TermIterator::~TermIterator() {
+  if (_infreqCursor) {
+    _infreqCursor->close();
+  }
+  if (_freqCursor) {
+    _freqCursor->close();
+  }
+}
+
 void FeatureStore::TermIterator::nextTerm() {
   char keyStr[MAX_TERM_SIZE+1];
   double val;

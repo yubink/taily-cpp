@@ -44,7 +44,7 @@ public:
 
   public:
     TermIterator(Db* freqDb, Db* infreqDb);
-    ~TermIterator() {};
+    virtual ~TermIterator();
     void nextTerm();
     bool finished();
 

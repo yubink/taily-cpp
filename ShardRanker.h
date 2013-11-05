@@ -17,7 +17,7 @@ class ShardRanker {
 private:
   // array of FeatureStore pointers
   // stores[0] is the whole collection store; stores[1] onwards is each shard; length is numShards+1
-  FeatureStore** _stores;
+  vector<FeatureStore*> _stores;
 
   // a single indri index built the same way; just for stemming term
   indri::collection::Repository* _repo;
@@ -38,7 +38,7 @@ private:
   void _getAll(vector<string>& stems, double* all);
 
 public:
-  ShardRanker();
+  ShardRanker(vector<string> dbPaths, indri::collection::Repository* repo, uint numShards, uint n_c);
   virtual ~ShardRanker();
 
   void init();

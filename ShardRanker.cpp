@@ -9,13 +9,18 @@
 #include <math.h>
 #include <boost/math/distributions/gamma.hpp>
 
-ShardRanker::ShardRanker() {
-  // TODO Auto-generated constructor stub
-
+ShardRanker::ShardRanker(vector<string> dbPaths, indri::collection::Repository* repo,
+    uint numShards, uint n_c) : _repo(repo), _numShards(numShards), _n_c(n_c) {
+  for (uint i = 0; i < dbPaths.size(); i++) {
+    _stores.push_back(new FeatureStore(dbPaths[i]));
+  }
 }
 
 ShardRanker::~ShardRanker() {
-  // TODO Auto-generated destructor stub
+  vector<FeatureStore*>::iterator it;
+  for (it = _stores.begin(); it != _stores.end(); ++it) {
+    delete (*it);
+  }
 }
 
 void ShardRanker::_getStems(string query, vector<string>* output) {

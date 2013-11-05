@@ -15,6 +15,7 @@
 #include "indri/ScopedLock.hpp"
 
 #include "FeatureStore.h"
+#include "ShardRanker.h"
 
 char* getOption(char ** begin, char ** end, const std::string & option) {
   char ** itr = std::find(begin, end, option);
@@ -52,6 +53,16 @@ void readParams(const char* paramFile, map<string, string> *params) {
 
 double calcIndriFeature(double tf, double ctf, double totalTermCount, double docLength, int mu = 2500) {
   return log( (tf + mu*(ctf/totalTermCount)) / (docLength + mu) );
+}
+
+void tokenize(string line, const char * delim, vector<string>* output) {
+  char mutableLine[line.size() + 1];
+  std::strcpy(mutableLine, line.c_str());
+  char* value = std::strtok(mutableLine, delim);
+  while (value != NULL) {
+    value = std::strtok(NULL, delim);
+    output->push_back(value);
+  }
 }
 
 int main(int argc, char * argv[]) {
@@ -158,7 +169,7 @@ int main(int argc, char * argv[]) {
 
     char mutableLine[indexstr.size() + 1];
     std::strcpy(mutableLine, indexstr.c_str());
-    char* value = std::strtok(mutableLine, " ");
+    char* value = std::strtok(mutableLine, ":");
 
     // get all shard indexes and add to vector
     while (value != NULL) {
@@ -283,12 +294,49 @@ int main(int argc, char * argv[]) {
     delete termit;
 
   } else if (strcmp(argv[1], "run") == 0) {
-    // create and open db
-    FeatureStore store(params["db"], true);
+    using namespace indri::collection;
 
-    char *stem = (char*) "whoop#min";
-    double minval;
-    std::cout << "Data is " << minval << std::endl;
+    string dbstr = params["db"];
+    string index = params["index"];
+    int n_c = atoi(params["n_c"].c_str());
+    int numShards = atoi(params["numShards"].c_str());
+
+    // get list of shard statistic dbs
+    vector<string> dbs;
+    tokenize(dbstr, ":", &dbs);
+
+    // get indri index
+    Repository repo;
+    repo.openRead(index);
+
+    // initialize Taily ranker
+    ShardRanker ranker(dbs, &repo, numShards, n_c);
+
+    // get query file
+    char* queryFile = getOption(argv, argv + argc, "-q");
+    ifstream qfile;
+    qfile.open(queryFile);
+
+    string line;
+    if (qfile.is_open()) {
+
+      while (getline(qfile, line)) {
+        char mutableLine[line.size() + 1];
+        std::strcpy(mutableLine, line.c_str());
+
+        char* qnum = std::strtok(mutableLine, ":");
+        char* query = std::strtok(NULL, ":");
+
+        vector<pair<int, double> > ranking;
+        ranker.rank(query, &ranking);
+
+        cout << qnum << ":" << query << endl;
+        for(int i = 0; i < ranking.size(); i++) {
+          cout << ranking[i].first << " " << ranking[i].second << endl;
+        }
+      }
+      qfile.close();
+    }
 
 
   } else {
