@@ -52,7 +52,8 @@ public:
     pair<string, double> currrentEntry();
   };
 
-  FeatureStore(string dir,  bool readOnly = false, DBTYPE type = DB_HASH);
+  // cache size is in megabytes
+  FeatureStore(string dir,  bool readOnly = false, int cache = 1);
   virtual ~FeatureStore();
 
   void putFeature(char* key, double value, int frequency, int flags = DB_NOOVERWRITE);
@@ -66,7 +67,7 @@ public:
   TermIterator* getTermIterator();
 
 private:
-  void _openDb(const char* dbPath, Db* db, u_int32_t oFlags, DBTYPE type = DB_HASH);
+  void _openDb(const char* dbPath, Db* db, u_int32_t oFlags, int cache = 5);
   void _closeDb(Db* db);
 };
 

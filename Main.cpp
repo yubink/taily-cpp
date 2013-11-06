@@ -84,7 +84,7 @@ int main(int argc, char * argv[]) {
     FeatureStore corpusStats(corpusDbPath, true);
 
     // create and open the data store
-    FeatureStore store(dbPath, false);
+    FeatureStore store(dbPath, false, 2000);
 
     indri::collection::Repository repo;
     repo.openRead(indexPath);
@@ -182,7 +182,7 @@ int main(int argc, char * argv[]) {
     string dbPath = params["db"];
     string indexstr = params["index"];
 
-    FeatureStore store(dbPath, false);
+    FeatureStore store(dbPath, false, 8000);
     vector<Repository*> indexes;
 
     char mutableLine[indexstr.size() + 1];

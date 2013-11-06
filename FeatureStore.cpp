@@ -15,14 +15,14 @@ const char* FeatureStore::MIN_FEAT_SUFFIX = "#m";
 const char* FeatureStore::SIZE_FEAT_SUFFIX = "#d";
 const char* FeatureStore::TERM_SIZE_FEAT_SUFFIX = "#t";
 
-FeatureStore::FeatureStore(string dir, bool readOnly, DBTYPE type) : _freqDb(NULL, 0),  _infreqDb(NULL, 0) {
+FeatureStore::FeatureStore(string dir, bool readOnly, int cache) : _freqDb(NULL, 0),  _infreqDb(NULL, 0) {
   string freqPath = dir + "/freq.db";
   string infreqPath = dir + "/infreq.db";
 
   u_int32_t flags = readOnly ? DB_RDONLY : DB_CREATE;
 
-  _openDb(freqPath.c_str(), &_freqDb, flags, type);
-  _openDb(infreqPath.c_str(), &_infreqDb, flags, type);
+  _openDb(freqPath.c_str(), &_freqDb, flags, cache);
+  _openDb(infreqPath.c_str(), &_infreqDb, flags, cache);
 }
 
 FeatureStore::~FeatureStore() {
@@ -100,13 +100,17 @@ FeatureStore::TermIterator* FeatureStore::getTermIterator() {
   return new FeatureStore::TermIterator(&_freqDb, &_infreqDb);
 }
 
-void FeatureStore::_openDb(const char* dbPath, Db* db, u_int32_t oFlags, DBTYPE type) {
+void FeatureStore::_openDb(const char* dbPath, Db* db, u_int32_t oFlags, int cache) {
   try {
+    int gigs = cache/1024;
+    cache -= gigs*1024;
+    // set cache size
+    db->set_cachesize(gigs, cache*1024*1024, 0);
     // Open the database
     db->open(NULL, // Transaction pointer
         dbPath, // Database file name
         NULL, // Optional logical database name
-        type, // Database access method
+        DB_HASH, // Database access method
         oFlags, // Open flags
         0); // File mode (using defaults)
   } catch (DbException &e) {
