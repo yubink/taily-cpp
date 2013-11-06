@@ -201,8 +201,10 @@ int main(int argc, char * argv[]) {
     long totalTermCount = 0;
     long totalDocCount = 0;
 
+    int idxCnt = 1;
     vector<Repository*>::iterator it;
     for (it = indexes.begin(); it != indexes.end(); ++it) {
+      cout << "Starting index " << idxCnt++ << endl;
 
       // if it has more than one index, quit
       Repository::index_state state = (*it)->indexes();
@@ -219,22 +221,35 @@ int main(int argc, char * argv[]) {
       // add the shard size (# of docs)
       totalDocCount += index->documentCount();
 
+      int termCnt = 0;
       // go through all terms in the index and collect df/ctf
       while (!iter->finished()) {
+        termCnt++;
+        if(termCnt % 100000 == 0) {
+          cout << "  Finished " << termCnt << " terms" << endl;
+        }
+
         DocListFileIterator::DocListData* entry = iter->currentEntry();
         TermData* termData = entry->termData;
         double ctf = termData->corpus.totalCount;
         double df = termData->corpus.documentCount;
 
+        // this seems pointless, but if I don't do this, it crashes.
+        entry->iterator->startIteration();
+        while( !entry->iterator->finished() ) {
+          indri::index::DocListIterator::DocumentData* doc = entry->iterator->currentEntry();
+          entry->iterator->nextEntry();
+        }
+
         // store df feature for term
         string dfFeatKey(termData->term);
         dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
-        store.addValFeature((char*)dfFeatKey.c_str(), df, ctf);
+        store.addValFeature((char*)dfFeatKey.c_str(), df, (int)ctf);
 
         // store ctf feature for term
         string ctfFeatKey(termData->term);
         ctfFeatKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-        store.addValFeature((char*)ctfFeatKey.c_str(), ctf, ctf);
+        store.addValFeature((char*)ctfFeatKey.c_str(), ctf, (int)ctf);
 
         iter->nextEntry();
       }
