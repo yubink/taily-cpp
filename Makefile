@@ -1,5 +1,8 @@
-TARGET=Taily
-SOURCES=$(wildcard *.cpp)
+TAILY_TARGET=Taily
+INDRI_TARGET=TailyRunQuery
+COMMON_SOURCES=FeatureStore.cpp ShardRanker.cpp
+TAILY_SOURCES=Main.cpp
+INDRI_SOURCES=TailyRunQuery.cpp
 CXX=g++
 INCPATH=-I$(HOME)/include 
 LDFLAGS=-g -L$(HOME)/lib -ldb_cxx -lindri -lz -lpthread -lm
@@ -9,11 +12,20 @@ ifdef DIST
 	CXXFLAGS+=-O3	
 endif 
 
-OBJECTS=$(SOURCES:.cpp=.o)
+COMMON_OBJECTS=$(COMMON_SOURCES:.cpp=.o)
+TAILY_OBJECTS=$(TAILY_SOURCES:.cpp=.o)
+INDRI_OBJECTS=$(INDRI_SOURCES:.cpp=.o)
 
-all: $(TARGET)
+all: taily indri
 
-$(TARGET): $(OBJECTS)
+taily: $(TAILY_TARGET)
+
+indri: $(INDRI_TARGET)
+
+$(TAILY_TARGET): $(TAILY_OBJECTS) $(COMMON_OBJECTS)
+	$(CXX) -o $@ $^ $(LDFLAGS)
+	
+$(INDRI_TARGET): $(INDRI_OBJECTS) $(COMMON_OBJECTS)
 	$(CXX) -o $@ $^ $(LDFLAGS)
 
 %.o: %.cpp %.h
