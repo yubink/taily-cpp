@@ -555,7 +555,7 @@ int main(int argc, char * argv[]) {
     // load some parameters for Taily
     int nShard = param.get("nshards");
     int n_c = param.get("n_c");
-    int v = param.get("n_c");
+    int v = param.get("v");
 
     // sample index used by Taily to do term tokenization/stem/stopping
     indri::collection::Repository sampleRepo;
@@ -609,6 +609,11 @@ int main(int argc, char * argv[]) {
       // Query client for shard retrievals
       QueryClient* client = new QueryClient(param);
       client->initialize();
+
+      if (shards.size() == 0) {
+        std::cout << "No shards selected!" << std::endl;
+        return 0;
+      }
 
       double shardRetrievalStart = getTime();
       int cnt = 0;

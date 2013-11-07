@@ -51,10 +51,15 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean, doubl
     string stem = (*it);
 
     // get minimum doc feature value for this stem
-    double minVal;
+    double minVal = DBL_MAX;
     string minFeat(stem);
     minFeat.append(FeatureStore::MIN_FEAT_SUFFIX);
-    _stores[0]->getFeature((char*)minFeat.c_str(), &minVal);
+    int found = _stores[0]->getFeature((char*)minFeat.c_str(), &minVal);
+
+    bool calcMin = false;
+    if (found != 0) {
+      calcMin = true;
+    }
 
     // sums of individual shard features to calculate corpus-wide feature
     double globalFSum = 0;
@@ -80,7 +85,8 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean, doubl
       string meanFeat(stem);
       meanFeat.append(FeatureStore::FEAT_SUFFIX);
       _stores[i]->getFeature((char*)meanFeat.c_str(), &fSum);
-      queryMean[i] += fSum/df - minVal;
+      //queryMean[i] += fSum/df - minVal;
+      queryMean[i] += fSum/df; // handle min values separately afterwards
       globalFSum += fSum;
 
       // add current term's variance to shard Eq (6)
@@ -90,6 +96,24 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean, doubl
       _stores[i]->getFeature((char*)f2Feat.c_str(), &f2Sum);
       queryVar[i] += f2Sum/df - pow(fSum/df,2);
       globalF2Sum += f2Sum;
+
+      // if there is no global min stored, figure out the minimum from shards
+      if (calcMin) {
+        double currMin;
+        string minFeat(stem);
+        minFeat.append(FeatureStore::MIN_FEAT_SUFFIX);
+        _stores[i]->getFeature((char*)minFeat.c_str(), &currMin);
+        if (currMin < minVal) {
+          minVal = currMin;
+        }
+      }
+    }
+
+    // adjust shard mean by minimum value
+    for(uint i = 1; i <= _numShards; i++) {
+      if (hasATerm[i]) {
+        queryMean[i] -= minVal;
+      }
     }
 
     if (globalDf > 0) hasATerm[0] = true;
@@ -167,7 +191,11 @@ void ShardRanker::rank(string query, vector<pair<int, double> >* ranking) {
     // case 1: there are no documents in the entire collection that matches any query term
     // return empty ranking
     return;
-  } else if (queryVar[0] == 0) {
+  } else if (queryVar[0] < 1e-10) {
+    // FIXME: these var ~= 0 cases should really be handled more carefully; instead of
+    // n_i = 1, it could be there are two or more very similarly scoring docs; I should keep
+    // track of the df of these shards and use that instead of n_i = 1...
+
     // case 2: there is only 1 document in entire collection that matches any query term
     // return the shard with the document with n_i = 1
     for (int i = 1; i < _numShards+1; i++) {
@@ -184,8 +212,8 @@ void ShardRanker::rank(string query, vector<pair<int, double> >* ranking) {
   double theta[_numShards+1];
 
   for (int i = 0; i < _numShards+1; i++) {
-    // special case, if df = 1, then var = 0 (or if no terms occur in shard)
-    if (queryVar[i] == 0) {
+    // special case, if df = 1, then var ~= 0 (or if no terms occur in shard)
+    if (queryVar[i] < 1e-10) {
       k[i] = -1;
       theta[i] = -1;
       continue;
@@ -216,9 +244,9 @@ void ShardRanker::rank(string query, vector<pair<int, double> >* ranking) {
     // if there are no query terms in shard, skip
     if (!hasATerm[i]) continue;
 
-    // if var is zero, then don't build a distribution.
+    // if var is ~= 0, then don't build a distribution.
     // based on the mean of the shard (which is the score of the single doc), n_i is either 0 or 1
-    if (queryVar[i] == 0 && hasATerm[i]) {
+    if (queryVar[i] < 1e-10 && hasATerm[i]) {
       if (queryMean[i] >= s_c) {
         ranking->push_back(make_pair(i, 1));
       }

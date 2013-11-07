@@ -188,7 +188,7 @@ int main(int argc, char * argv[]) {
     string dbPath = params["db"];
     string indexstr = params["index"];
 
-    FeatureStore store(dbPath, false, 8000);
+    FeatureStore store(dbPath, false, 2000);
     vector<Repository*> indexes;
 
     char mutableLine[indexstr.size() + 1];
@@ -399,6 +399,9 @@ int main(int argc, char * argv[]) {
     cout << "t "<< val << " " ;
     store.getFeature((char*)"orange#f2", &val);
     cout << "f2 "<< val << endl;
+    cout << "orange min ";
+    store.getFeature((char*)"orange#m", &val);
+    cout << val << endl ;
 
     cout << "apple ";
     store.getFeature((char*)"apple#f", &val);
