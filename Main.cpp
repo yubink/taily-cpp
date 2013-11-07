@@ -440,7 +440,6 @@ int main(int argc, char * argv[]) {
     string dbstr = params["db"];
     string index = params["index"];
     int n_c = atoi(params["n_c"].c_str());
-    int numShards = atoi(params["numShards"].c_str());
 
     // get list of shard statistic dbs
     vector<string> dbs;
@@ -471,7 +470,7 @@ int main(int argc, char * argv[]) {
         vector<pair<int, double> > ranking;
         ranker.rank(query, &ranking);
 
-        cout << qnum << ":" << query << endl;
+        cout << qnum << "\t" << query << endl;
         for(int i = 0; i < ranking.size(); i++) {
           cout << ranking[i].first << " " << ranking[i].second << endl;
         }
