@@ -243,6 +243,10 @@ int main(int argc, char * argv[]) {
           if (stem.size() == 0) continue;
 
           DocListIterator* docIter = index->docListIterator(stem);
+
+          // term not found
+          if (docIter == NULL) continue;
+
           docIter->startIteration();
           TermData* termData = docIter->termData();
           collectShardStats(docIter, termData, &corpusStats, &store,
@@ -343,6 +347,10 @@ int main(int argc, char * argv[]) {
           if (stem.size() == 0) continue;
 
           DocListIterator* docIter = index->docListIterator(stem);
+
+          // term not found
+          if (docIter == NULL) continue;
+
           docIter->startIteration();
           TermData* termData = docIter->termData();
           collectCorpusStats(docIter, termData, &store);
