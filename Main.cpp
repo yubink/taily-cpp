@@ -188,7 +188,7 @@ int main(int argc, char * argv[]) {
     string dbPath = params["db"];
     string indexstr = params["index"];
 
-    FeatureStore store(dbPath, false, 2000);
+    FeatureStore store(dbPath, false, 8000);
     vector<Repository*> indexes;
 
     char mutableLine[indexstr.size() + 1];
