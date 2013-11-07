@@ -3,6 +3,8 @@
 #include <iostream>
 #include <algorithm>
 #include <string>
+#include <vector>
+#include <set>
 #include <db_cxx.h>
 #include <boost/math/distributions/gamma.hpp>
 #include <boost/algorithm/string.hpp>
@@ -229,6 +231,7 @@ int main(int argc, char * argv[]) {
 
       } else {
         // only create shard statistics for specified terms
+        set<string> stemsSeen;
         vector<string>::iterator it;
         int termCnt = 0;
         for (it = terms.begin(); it != terms.end(); ++it) {
@@ -238,6 +241,10 @@ int main(int argc, char * argv[]) {
           }
           // stemify term
           string stem = repo.processTerm(*it);
+          if (stemsSeen.find(stem) != stemsSeen.end()) {
+            continue;
+          }
+          stemsSeen.insert(stem);
 
           // if this is a stopword, skip
           if (stem.size() == 0) continue;
@@ -332,7 +339,10 @@ int main(int argc, char * argv[]) {
         delete iter;
 
       } else {
+
         // only create shard statistics for specified terms
+        set<string> stemsSeen;
+
         vector<string>::iterator tit;
         int termCnt = 0;
         for (tit = terms.begin(); tit != terms.end(); ++tit) {
@@ -340,8 +350,12 @@ int main(int argc, char * argv[]) {
           if (termCnt % 100 == 0) {
             cout << "  Finished " << termCnt << " terms" << endl;
           }
-          // stemify term
+          // stemify term; make sure we're not doing this again!
           string stem = (*it)->processTerm(*tit);
+          if (stemsSeen.find(stem) != stemsSeen.end()) {
+            continue;
+          }
+          stemsSeen.insert(stem);
 
           // if this is a stopword, skip
           if (stem.size() == 0) continue;
