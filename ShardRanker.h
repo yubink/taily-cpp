@@ -39,7 +39,7 @@ private:
   void _getAll(vector<string>& stems, double* all);
 
 public:
-  ShardRanker(vector<string> dbPaths, indri::collection::Repository* repo, uint numShards, uint n_c);
+  ShardRanker(vector<string> dbPaths, indri::collection::Repository* repo, uint n_c);
   virtual ~ShardRanker();
 
   void init();

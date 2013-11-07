@@ -528,10 +528,6 @@ int main(int argc, char * argv[]) {
       LEMUR_THROW( LEMUR_MISSING_PARAMETER_ERROR,
           "Must specify a trecOutput file");
 
-    if (!param.exists("nshards"))
-      LEMUR_THROW( LEMUR_MISSING_PARAMETER_ERROR,
-          "Must specify # of shards" );
-
     if (!param.exists("n_c"))
       LEMUR_THROW( LEMUR_MISSING_PARAMETER_ERROR,
           "Must specify taily parameter n_c" );
@@ -553,7 +549,6 @@ int main(int argc, char * argv[]) {
     load_daemons(parameterDaemons, daemons);
 
     // load some parameters for Taily
-    int nShard = param.get("nshards");
     int n_c = param.get("n_c");
     int v = param.get("v");
 
@@ -577,7 +572,7 @@ int main(int argc, char * argv[]) {
     std::cout << start << std::endl;
 
     // initialize shard ranker
-    ShardRanker ranker(dbs, &sampleRepo, nShard, n_c);
+    ShardRanker ranker(dbs, &sampleRepo, n_c);
 
     std::cout << getTime() - start << std::endl;
 
@@ -617,7 +612,7 @@ int main(int argc, char * argv[]) {
 
       double shardRetrievalStart = getTime();
       int cnt = 0;
-      for (int i = 0; i < shards.size() && cnt < nShard; i++) {
+      for (int i = 0; i < shards.size(); i++) {
         int shardId = shards[i];
         if (daemons.count(shardId) == 0)
           continue;

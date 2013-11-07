@@ -341,7 +341,7 @@ int main(int argc, char * argv[]) {
     repo.openRead(index);
 
     // initialize Taily ranker
-    ShardRanker ranker(dbs, &repo, numShards, n_c);
+    ShardRanker ranker(dbs, &repo, n_c);
 
     // get query file
     char* queryFile = getOption(argv, argv + argc, "-q");
