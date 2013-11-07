@@ -67,6 +67,12 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean,
     double globalF2Sum = 0;
     double globalDf = 0;
 
+    // keep track of how many times this term appeared in the shards for minVal later
+    double dfCache[_numShards+1];
+    for(uint i = 0; i <= _numShards; i++) {
+      dfCache[i] = 0;
+    }
+
     // for each shard (not including whole corpus db), calculate mean/var
     // keep track of totals to use in the corpus-wide features
     for (uint i = 1; i <= _numShards; i++) {
@@ -75,6 +81,7 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean,
       string dfFeat(stem);
       dfFeat.append(FeatureStore::SIZE_FEAT_SUFFIX);
       _stores[i]->getFeature((char*) dfFeat.c_str(), &df);
+      dfCache[i] = df;
       globalDf += df;
 
       // if this shard doesn't have this term, skip; otherwise you get nan everywhere
@@ -111,19 +118,21 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean,
       }
     }
 
+    dfCache[0] = globalDf;
+    if (globalDf > 0) {
+      hasATerm[0] = true;
+
+      // calculate global mean/variances based on shard sums; again, minVal is for later
+      queryMean[0] += globalFSum / globalDf;
+      queryVar[0] += globalF2Sum / globalDf - pow(globalFSum / globalDf, 2);
+    }
+
     // adjust shard mean by minimum value
-    for (uint i = 1; i <= _numShards; i++) {
-      if (hasATerm[i]) {
+    for (uint i = 0; i <= _numShards; i++) {
+      if (dfCache[i] > 0) {
         queryMean[i] -= minVal;
       }
     }
-
-    if (globalDf > 0)
-      hasATerm[0] = true;
-
-    // calculate global mean/variances based on shard sums
-    queryMean[0] += globalFSum / globalDf - minVal;
-    queryVar[0] += globalF2Sum / globalDf - pow(globalFSum / globalDf, 2);
   }
 }
 

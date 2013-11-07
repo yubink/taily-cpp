@@ -17,6 +17,9 @@
 #include "FeatureStore.h"
 #include "ShardRanker.h"
 
+using namespace indri::index;
+using namespace indri::collection;
+
 char* getOption(char ** begin, char ** end, const std::string & option) {
   char ** itr = std::find(begin, end, option);
   if (itr != end && ++itr != end) {
@@ -65,6 +68,84 @@ void tokenize(string line, const char * delim, vector<string>* output) {
   }
 }
 
+// innards of buildshard
+void collectShardStats(DocListIterator* docIter, TermData* termData, FeatureStore* corpusStats,
+    FeatureStore* store, Index* index, double totalTermCount) {
+  // get ctf of term from corpus-wide stats Db
+  double ctf;
+  string ctfKey(termData->term);
+  ctfKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+  corpusStats->getFeature((char*)ctfKey.c_str(), &ctf);
+
+  double featSum = 0.0f;
+  double squaredFeatSum = 0.0f;
+  double minFeat = DBL_MAX;
+
+  docIter->startIteration();
+
+  // calculate Sum(f) and Sum(f^2) top parts of eq (3) (4)
+  while (!docIter->finished()) {
+    DocListIterator::DocumentData* doc = docIter->currentEntry();
+    double length = index->documentLength(doc->document);
+    double tf = doc->positions.size();
+
+    // calulate Indri score feature and sum it up
+    double feat = calcIndriFeature(tf, ctf, totalTermCount, length);
+    featSum += feat;
+    squaredFeatSum += pow(feat, 2);
+
+    // keep track of this shard's minimum feature
+    if (feat < minFeat) {
+      minFeat = feat;
+    }
+    docIter->nextEntry();
+  }
+
+  // store min feature for term (for this shard; will later be merged into corpus-wide Db)
+  string minFeatKey(termData->term);
+  minFeatKey.append(FeatureStore::MIN_FEAT_SUFFIX);
+  store->putFeature((char*)minFeatKey.c_str(), minFeat, (int)ctf);
+
+  // get and store shard df feature for term
+  double shardDf = termData->corpus.documentCount;
+  string dfFeatKey(termData->term);
+  dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
+  store->putFeature((char*)dfFeatKey.c_str(), shardDf, (int)ctf);
+
+  // store sum f
+  string featKey(termData->term);
+  featKey.append(FeatureStore::FEAT_SUFFIX);
+  store->putFeature((char*) featKey.c_str(), featSum, (int)ctf);
+
+  // store sum f^2
+  string squaredFeatKey(termData->term);
+  squaredFeatKey.append(FeatureStore::SQUARED_FEAT_SUFFIX);
+  store->putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, (int)ctf);
+}
+
+// innards of buildcorpus
+void collectCorpusStats(DocListIterator* docIter, TermData* termData,
+    FeatureStore* store) {
+  double ctf = termData->corpus.totalCount;
+  double df = termData->corpus.documentCount;
+
+  // this seems pointless, but if I don't do this, it crashes.
+  while (!docIter->finished()) {
+    indri::index::DocListIterator::DocumentData* doc = docIter->currentEntry();
+    docIter->nextEntry();
+  }
+
+  // store df feature for term
+  string dfFeatKey(termData->term);
+  dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
+  store->addValFeature((char*) dfFeatKey.c_str(), df, (int) ctf);
+
+  // store ctf feature for term
+  string ctfFeatKey(termData->term);
+  ctfFeatKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+  store->addValFeature((char*) ctfFeatKey.c_str(), ctf, (int) ctf);
+}
+
 int main(int argc, char * argv[]) {
   int MU = 2500;
 
@@ -80,11 +161,21 @@ int main(int argc, char * argv[]) {
     string indexPath = params["index"];
     string corpusDbPath = params["corpusDb"];
 
+    int ram = 2000;
+    if (params.find("ram") != params.end()) {
+      ram = atoi(params["ram"].c_str());
+    }
+
+    vector<string> terms;
+    if (params.find("terms") != params.end()) {
+      tokenize(params["terms"], ":", &terms);
+    }
+
     // open corpus statistics db
     FeatureStore corpusStats(corpusDbPath, true);
 
     // create and open the data store
-    FeatureStore store(dbPath, false, 2000);
+    FeatureStore store(dbPath, false, ram);
 
     indri::collection::Repository repo;
     repo.openRead(indexPath);
@@ -97,12 +188,9 @@ int main(int argc, char * argv[]) {
     }
 
     for(size_t i = 0; i < state->size(); i++) {
-      using namespace indri::index;
       Index* index = (*state)[i];
       indri::thread::ScopedLock( index->iteratorLock() );
 
-      DocListFileIterator* iter = index->docListFileIterator();
-      iter->startIteration();
       cout << index->termCount() << " " << index->documentCount() << endl;
 
       // get the total term length of the collection (for Indri scoring)
@@ -115,70 +203,53 @@ int main(int argc, char * argv[]) {
       string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
       store.putFeature((char*)featSize.c_str(), (double)shardSizeFeat, shardSizeFeat);
 
-      int termCnt = 0;
-      // for each stem in the index
-      while (!iter->finished()) {
-        termCnt++;
-        if(termCnt % 100000 == 0) {
-          cout << "  Finished " << termCnt << " terms" << endl;
-        }
+      // if there are no term constraints, build all terms
+      if (terms.size() == 0) {
+        DocListFileIterator* iter = index->docListFileIterator();
+        iter->startIteration();
 
-        DocListFileIterator::DocListData* entry = iter->currentEntry();
-        TermData* termData = entry->termData;
-
-        // get ctf of term from corpus-wide stats Db
-        double ctf;
-        string ctfKey(termData->term);
-        ctfKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-        corpusStats.getFeature((char*)ctfKey.c_str(), &ctf);
-
-        double featSum = 0.0f;
-        double squaredFeatSum = 0.0f;
-        double minFeat = DBL_MAX;
-
-        entry->iterator->startIteration();
-
-        // calculate Sum(f) and Sum(f^2) top parts of eq (3) (4)
-        while (!entry->iterator->finished()) {
-          DocListIterator::DocumentData* doc = entry->iterator->currentEntry();
-          double length = index->documentLength(doc->document);
-          double tf = doc->positions.size();
-
-          // calulate Indri score feature and sum it up
-          double feat = calcIndriFeature(tf, ctf, totalTermCount, length);
-          featSum += feat;
-          squaredFeatSum += pow(feat, 2);
-
-          // keep track of this shard's minimum feature
-          if (feat < minFeat) {
-            minFeat = feat;
+        int termCnt = 0;
+        // for each stem in the index
+        while (!iter->finished()) {
+          termCnt++;
+          if (termCnt % 100000 == 0) {
+            cout << "  Finished " << termCnt << " terms" << endl;
           }
-          entry->iterator->nextEntry();
+
+          DocListFileIterator::DocListData* entry = iter->currentEntry();
+          TermData* termData = entry->termData;
+          entry->iterator->startIteration();
+
+          collectShardStats(entry->iterator, termData, &corpusStats, &store,
+              index, totalTermCount);
+
+          iter->nextEntry();
         }
-        // store min feature for term (for this shard; will later be merged into corpus-wide Db)
-        string minFeatKey(termData->term);
-        minFeatKey.append(FeatureStore::MIN_FEAT_SUFFIX);
-        store.putFeature((char*)minFeatKey.c_str(), minFeat, (int)ctf);
+        delete iter;
 
-        // get and store shard df feature for term
-        double shardDf = termData->corpus.documentCount;
-        string dfFeatKey(termData->term);
-        dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
-        store.putFeature((char*)dfFeatKey.c_str(), shardDf, (int)ctf);
+      } else {
+        // only create shard statistics for specified terms
+        vector<string>::iterator it;
+        int termCnt = 0;
+        for (it = terms.begin(); it != terms.end(); ++it) {
+          termCnt++;
+          if (termCnt % 100 == 0) {
+            cout << "  Finished " << termCnt << " terms" << endl;
+          }
+          // stemify term
+          string stem = repo.processTerm(*it);
 
-        // store sum f
-        string featKey(termData->term);
-        featKey.append(FeatureStore::FEAT_SUFFIX);
-        store.putFeature((char*) featKey.c_str(), featSum, (int)ctf);
+          // if this is a stopword, skip
+          if (stem.size() == 0) continue;
 
-        // store sum f^2
-        string squaredFeatKey(termData->term);
-        squaredFeatKey.append(FeatureStore::SQUARED_FEAT_SUFFIX);
-        store.putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, (int)ctf);
+          DocListIterator* docIter = index->docListIterator(stem);
+          docIter->startIteration();
+          TermData* termData = docIter->termData();
+          collectShardStats(docIter, termData, &corpusStats, &store,
+              index, totalTermCount);
+        }
 
-        iter->nextEntry();
       }
-      delete iter;
 
     }
   } else if (strcmp(argv[1], "buildcorpus") == 0) {
@@ -188,7 +259,17 @@ int main(int argc, char * argv[]) {
     string dbPath = params["db"];
     string indexstr = params["index"];
 
-    FeatureStore store(dbPath, false, 8000);
+    int ram = 8000;
+    if (params.find("ram") != params.end()) {
+      ram = atoi(params["ram"].c_str());
+    }
+
+    vector<string> terms;
+    if (params.find("terms") != params.end()) {
+      tokenize(params["terms"], ":", &terms);
+    }
+
+    FeatureStore store(dbPath, false, ram);
     vector<Repository*> indexes;
 
     char mutableLine[indexstr.size() + 1];
@@ -219,47 +300,54 @@ int main(int argc, char * argv[]) {
         exit(EXIT_FAILURE);
       }
       Index* index = (*state)[0];
-      DocListFileIterator* iter = index->docListFileIterator();
-      iter->startIteration();
 
       // add the total term length of shard
       totalTermCount += index->termCount();
       // add the shard size (# of docs)
       totalDocCount += index->documentCount();
 
-      int termCnt = 0;
-      // go through all terms in the index and collect df/ctf
-      while (!iter->finished()) {
-        termCnt++;
-        if(termCnt % 100000 == 0) {
-          cout << "  Finished " << termCnt << " terms" << endl;
+      if (terms.size() == 0) {
+        DocListFileIterator* iter = index->docListFileIterator();
+        iter->startIteration();
+
+        int termCnt = 0;
+        // go through all terms in the index and collect df/ctf
+        while (!iter->finished()) {
+          termCnt++;
+          if (termCnt % 100000 == 0) {
+            cout << "  Finished " << termCnt << " terms" << endl;
+          }
+
+          DocListFileIterator::DocListData* entry = iter->currentEntry();
+          TermData* termData = entry->termData;
+          entry->iterator->startIteration();
+
+          collectCorpusStats(entry->iterator, termData, &store);
+          iter->nextEntry();
         }
+        delete iter;
 
-        DocListFileIterator::DocListData* entry = iter->currentEntry();
-        TermData* termData = entry->termData;
-        double ctf = termData->corpus.totalCount;
-        double df = termData->corpus.documentCount;
+      } else {
+        // only create shard statistics for specified terms
+        vector<string>::iterator tit;
+        int termCnt = 0;
+        for (tit = terms.begin(); tit != terms.end(); ++tit) {
+          termCnt++;
+          if (termCnt % 100 == 0) {
+            cout << "  Finished " << termCnt << " terms" << endl;
+          }
+          // stemify term
+          string stem = (*it)->processTerm(*tit);
 
-        // this seems pointless, but if I don't do this, it crashes.
-        entry->iterator->startIteration();
-        while( !entry->iterator->finished() ) {
-          indri::index::DocListIterator::DocumentData* doc = entry->iterator->currentEntry();
-          entry->iterator->nextEntry();
+          // if this is a stopword, skip
+          if (stem.size() == 0) continue;
+
+          DocListIterator* docIter = index->docListIterator(stem);
+          docIter->startIteration();
+          TermData* termData = docIter->termData();
+          collectCorpusStats(docIter, termData, &store);
         }
-
-        // store df feature for term
-        string dfFeatKey(termData->term);
-        dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
-        store.addValFeature((char*)dfFeatKey.c_str(), df, (int)ctf);
-
-        // store ctf feature for term
-        string ctfFeatKey(termData->term);
-        ctfFeatKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-        store.addValFeature((char*)ctfFeatKey.c_str(), ctf, (int)ctf);
-
-        iter->nextEntry();
       }
-      delete iter;
     }
 
     // add collection global features needed for shard ranking
