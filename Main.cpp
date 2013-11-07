@@ -115,8 +115,14 @@ int main(int argc, char * argv[]) {
       string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
       store.putFeature((char*)featSize.c_str(), (double)shardSizeFeat, shardSizeFeat);
 
+      int termCnt = 0;
       // for each stem in the index
       while (!iter->finished()) {
+        termCnt++;
+        if(termCnt % 100000 == 0) {
+          cout << "  Finished " << termCnt << " terms" << endl;
+        }
+
         DocListFileIterator::DocListData* entry = iter->currentEntry();
         TermData* termData = entry->termData;
 
@@ -277,9 +283,15 @@ int main(int argc, char * argv[]) {
       stores.push_back(new FeatureStore(dbs[i], true));
     }
 
+    int termCnt = 0;
     // iterate through the database for all terms and find gloabl min feature
     FeatureStore::TermIterator* termit = corpusStore.getTermIterator();
     while (!termit->finished()) {
+      termCnt++;
+      if(termCnt % 100000 == 0) {
+        cout << "  Finished " << termCnt << " terms" << endl;
+      }
+        
       // get a stem and its ctf
       pair<string,double> termAndCtf = termit->currrentEntry();
       string stem = termAndCtf.first;

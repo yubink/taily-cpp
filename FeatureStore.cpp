@@ -21,7 +21,9 @@ FeatureStore::FeatureStore(string dir, bool readOnly, int cache) : _freqDb(NULL,
 
   u_int32_t flags = readOnly ? DB_RDONLY : DB_CREATE;
 
-  _openDb(freqPath.c_str(), &_freqDb, flags, cache);
+  int freqCache = (cache/10 == 0) ? 1 : cache/10;
+
+  _openDb(freqPath.c_str(), &_freqDb, flags, freqCache);
   _openDb(infreqPath.c_str(), &_infreqDb, flags, cache);
 }
 
