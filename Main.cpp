@@ -472,7 +472,7 @@ int main(int argc, char * argv[]) {
 
         cout << qnum << "\t" << query << endl;
         for(int i = 0; i < ranking.size(); i++) {
-          cout << ranking[i].first << " " << ranking[i].second << endl;
+          cout << ranking[i].first << "\t" << ranking[i].second << endl;
         }
       }
       qfile.close();
