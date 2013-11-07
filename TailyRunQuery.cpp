@@ -491,7 +491,8 @@ void load_dbs(indri::api::Parameters& p,
     dbMapping[shard] = path;
   }
 
-  for (size_t i = 0; i < p.size(); i++) {
+  // shard numbers start at 1
+  for (size_t i = 1; i < p.size()+1; i++) {
     dbs.push_back(dbMapping[i]);
   }
 }
@@ -540,6 +541,10 @@ int main(int argc, char * argv[]) {
       LEMUR_THROW( LEMUR_MISSING_PARAMETER_ERROR,
           "Must specify taily parameter v" );
 
+    if (!param.exists("corpusDb"))
+      LEMUR_THROW( LEMUR_MISSING_PARAMETER_ERROR,
+          "Must specify corpus-wide statistics db" );
+
     std::string trecOutput = param["trecOutput"];
     std::fstream trecout(trecOutput.c_str(), std::ios::out);
 
@@ -557,7 +562,9 @@ int main(int argc, char * argv[]) {
     sampleRepo.open(param.get("sampleIndex"));
 
     // load taily statistics dbs; dbs[0] is corpus wide and the rest are shards
+    std::string corpusDb = param.get("corpusDb");
     std::vector<std::string> dbs;
+    dbs.push_back(corpusDb);
     indri::api::Parameters paramDbs = param["db"];
     load_dbs(paramDbs, dbs);
 
