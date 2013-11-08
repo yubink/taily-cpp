@@ -468,12 +468,15 @@ int main(int argc, char * argv[]) {
         char* query = std::strtok(NULL, ":");
 
         vector<pair<int, double> > ranking;
-        ranker.rank(query, &ranking);
+        if (query) {
+          ranker.rank(query, &ranking);
+        }
 
         cout << qnum << "\t" << query << endl;
         for(int i = 0; i < ranking.size(); i++) {
           cout << ranking[i].first << "\t" << ranking[i].second << endl;
         }
+        cout << endl;
       }
       qfile.close();
     }
