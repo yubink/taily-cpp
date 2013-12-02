@@ -48,8 +48,6 @@ void readParams(const char* paramFile, map<string, string> *params) {
       char* key = std::strtok(mutableLine, "=");
       char* value = std::strtok(NULL, "=");
       (*params)[key] = value;
-
-      std::cout << line << endl;
     }
     file.close();
   }

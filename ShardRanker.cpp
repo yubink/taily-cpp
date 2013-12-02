@@ -161,8 +161,8 @@ void ShardRanker::_getAll(vector<string>& stems, double* all) {
       _stores[i]->getFeature((char*) stem.c_str(), &df);
 
       // smooth it
-      if (df < 1)
-        df = 1;
+      if (df < 5)
+        df = 5;
 
       // store df for all_i calculation
       dfs[dfCnt++] = df;
