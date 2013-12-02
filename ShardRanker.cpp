@@ -13,7 +13,6 @@ ShardRanker::ShardRanker(vector<string> dbPaths,
     indri::collection::Repository* repo, uint n_c) :
     _repo(repo), _numShards(dbPaths.size() - 1), _n_c(n_c) {
   for (uint i = 0; i < dbPaths.size(); i++) {
-    cout << dbPaths[i] << endl;
     _stores.push_back(new FeatureStore(dbPaths[i], true));
   }
 }
@@ -161,8 +160,8 @@ void ShardRanker::_getAll(vector<string>& stems, double* all) {
       _stores[i]->getFeature((char*) stem.c_str(), &df);
 
       // smooth it
-      if (df < 1)
-        df = 1;
+      if (df < 5)
+        df = 5;
 
       // store df for all_i calculation
       dfs[dfCnt++] = df;
