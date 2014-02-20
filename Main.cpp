@@ -262,7 +262,6 @@ int main(int argc, char * argv[]) {
     set<string> stemsSeen;
     int termCnt = 0;
     for (it = terms.begin(); it != terms.end(); ++it) {
-      cout << "Processing: " << (*it) << endl;
 
       termCnt++;
       if (termCnt % 100 == 0) {
@@ -275,6 +274,7 @@ int main(int argc, char * argv[]) {
         continue;
       }
       stemsSeen.insert(stem);
+      cout << "Processing: " << (*it) << " (" << stem << ")" << endl;
 
       // if this is a stopword, skip
       if (stem.size() == 0)
@@ -341,6 +341,8 @@ int main(int argc, char * argv[]) {
       for (int i = 0; i < shardIds.size(); i++)
       {
         int shardId = shardIds[i];
+        // don't store empty terms
+        if (shardDataMap[shardId].shardDf == 0) continue;
         storeTermStats(stores[i], stem, (int)ctf, shardDataMap[shardId].min,
             shardDataMap[shardId].shardDf, shardDataMap[shardId].f,
             shardDataMap[shardId].f2);
@@ -348,6 +350,18 @@ int main(int argc, char * argv[]) {
       }
 
     } // end term iter
+
+    // clean up
+    vector<FeatureStore*>::iterator fit;
+    for (fit = stores.begin(); fit != stores.end(); ++fit) {
+      delete (*fit);
+    }
+
+    vector<Repository*>::iterator rit;
+    for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
+      (*rit)->close();
+      delete (*rit);
+    }
 
   } else if (strcmp(argv[1], "buildshard") == 0) {
 
