@@ -4,11 +4,16 @@ COMMON_SOURCES=FeatureStore.cpp ShardRanker.cpp
 TAILY_SOURCES=Main.cpp
 INDRI_SOURCES=TailyRunQuery.cpp
 CXX=g++
-DEPENDENCIES = lemur xpdf antlr
-#INCPATH=-I$(HOME)/include 
-INCPATH=-I$(HOME)/indri-5.2/include $(patsubst %, -I$(HOME)/indri-5.2/contrib/%/include, $(DEPENDENCIES))   -I$(HOME)/include
-LDFLAGS=-g -L$(HOME)/indri-5.2/obj $(patsubst %, -L$(HOME)/indri-5.2/contrib/%/obj, $(DEPENDENCIES)) -L$(HOME)/opt/db-6.0.20.NC/build_unix -ldb_cxx -lindri $(patsubst %, -l%, $(DEPENDENCIES)) -lz -lpthread -lm
-#CXXFLAGS=-DPACKAGE_NAME=\"Indri\" -DPACKAGE_TARNAME=\"indri\" -DPACKAGE_VERSION=\"5.5\" -DPACKAGE_STRING=\"Indri\ 5.5\" -DPACKAGE_BUGREPORT=\"project@lemurproject.org\" -DINDRI_STANDALONE=1 -DHAVE_LIBM=1 -DHAVE_LIBPTHREAD=1 -DHAVE_LIBZ=1 -DHAVE_NAMESPACES=/\*\*/ -DISNAN_IN_NAMESPACE_STD=/\*\*/ -DSTDC_HEADERS=1 -DHAVE_SYS_TYPES_H=1 -DHAVE_SYS_STAT_H=1 -DHAVE_STDLIB_H=1 -DHAVE_STRING_H=1 -DHAVE_MEMORY_H=1 -DHAVE_STRINGS_H=1 -DHAVE_INTTYPES_H=1 -DHAVE_STDINT_H=1 -DHAVE_UNISTD_H=1 -DHAVE_FSEEKO=1 -DHAVE_EXT_ATOMICITY_H=1 -DP_NEEDS_GNU_CXX_NAMESPACE=1 -DHAVE_MKSTEMP=1 -DHAVE_MKSTEMPS=1 -DNDEBUG=1 -DNDEBUG  -g $(INCPATH)
+
+ifdef OLDINDRI
+	DEPENDENCIES = lemur xpdf antlr
+	INCPATH=-I$(HOME)/indri-5.2/include $(patsubst %, -I$(HOME)/indri-5.2/contrib/%/include, $(DEPENDENCIES))   -I$(HOME)/include
+	LDFLAGS=-g -L$(HOME)/indri-5.2/obj $(patsubst %, -L$(HOME)/indri-5.2/contrib/%/obj, $(DEPENDENCIES)) -L$(HOME)/opt/db-6.0.20.NC/build_unix -ldb_cxx -lindri $(patsubst %, -l%, $(DEPENDENCIES)) -lz -lpthread -lm
+else
+	INCPATH=-I$(HOME)/include 
+	LDFLAGS=-g -L$(HOME)/lib -ldb_cxx -lindri -lz -lpthread -lm
+endif
+
 CXXFLAGS= -DP_NEEDS_GNU_CXX_NAMESPACE=1 -DNDEBUG=1 -DNDEBUG  -g $(INCPATH)
 ifdef DIST
 	CXXFLAGS+=-O3	

@@ -68,6 +68,38 @@ void tokenize(string line, const char * delim, vector<string>* output) {
   }
 }
 
+struct shard_data {
+  double min;
+  double shardDf;
+  double f;
+  double f2;
+
+  shard_data(): min(DBL_MAX), shardDf(0.0), f(0.0), f2(0.0) {};
+};
+
+void storeTermStats(FeatureStore* store, string term, int ctf, double min,
+    double shardDf, double f, double f2) {
+  // store min feature for term (for this shard; will later be merged into corpus-wide Db)
+  string minFeatKey(term);
+  minFeatKey.append(FeatureStore::MIN_FEAT_SUFFIX);
+  store->putFeature((char*)minFeatKey.c_str(), min, ctf);
+
+  // get and store shard df feature for term
+  string dfFeatKey(term);
+  dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
+  store->putFeature((char*)dfFeatKey.c_str(), shardDf, ctf);
+
+  // store sum f
+  string featKey(term);
+  featKey.append(FeatureStore::FEAT_SUFFIX);
+  store->putFeature((char*) featKey.c_str(), f, ctf);
+
+  // store sum f^2
+  string squaredFeatKey(term);
+  squaredFeatKey.append(FeatureStore::SQUARED_FEAT_SUFFIX);
+  store->putFeature((char*) squaredFeatKey.c_str(), f2, ctf);
+}
+
 // innards of buildshard
 void collectShardStats(DocListIterator* docIter, TermData* termData, FeatureStore* corpusStats,
     FeatureStore* store, Index* index, double totalTermCount) {
@@ -101,26 +133,8 @@ void collectShardStats(DocListIterator* docIter, TermData* termData, FeatureStor
     docIter->nextEntry();
   }
 
-  // store min feature for term (for this shard; will later be merged into corpus-wide Db)
-  string minFeatKey(termData->term);
-  minFeatKey.append(FeatureStore::MIN_FEAT_SUFFIX);
-  store->putFeature((char*)minFeatKey.c_str(), minFeat, (int)ctf);
-
-  // get and store shard df feature for term
   double shardDf = termData->corpus.documentCount;
-  string dfFeatKey(termData->term);
-  dfFeatKey.append(FeatureStore::SIZE_FEAT_SUFFIX);
-  store->putFeature((char*)dfFeatKey.c_str(), shardDf, (int)ctf);
-
-  // store sum f
-  string featKey(termData->term);
-  featKey.append(FeatureStore::FEAT_SUFFIX);
-  store->putFeature((char*) featKey.c_str(), featSum, (int)ctf);
-
-  // store sum f^2
-  string squaredFeatKey(termData->term);
-  squaredFeatKey.append(FeatureStore::SQUARED_FEAT_SUFFIX);
-  store->putFeature((char*) squaredFeatKey.c_str(), squaredFeatSum, (int)ctf);
+  storeTermStats(store, termData->term, ctf, minFeat, shardDf, featSum, squaredFeatSum);
 }
 
 // innards of buildcorpus
@@ -155,7 +169,183 @@ int main(int argc, char * argv[]) {
   std::map<string, string> params;
   readParams(paramFile, &params);
 
-  if (strcmp(argv[1], "buildshard") == 0) {
+  if (strcmp(argv[1], "buildfrommap") == 0) {
+
+    string dbPath = params["db"]; // in this case, this will be a path to a folder
+    string indexstr = params["index"];
+    string corpusDbPath = params["corpusDb"];
+
+    int ram = 2000;
+    if (params.find("ram") != params.end()) {
+      ram = atoi(params["ram"].c_str());
+    }
+
+    vector<string> terms;
+    if (params.find("terms") != params.end()) {
+      tokenize(params["terms"], ":", &terms);
+    }
+
+    // open all indri indexes; the 10/20 part indexes used
+    vector<Repository*> indexes;
+    char mutableLine[indexstr.size() + 1];
+    std::strcpy(mutableLine, indexstr.c_str());
+
+    // get all shard indexes and add to vector
+    for (char* value = std::strtok(mutableLine, ":");
+        value != NULL;
+        value = std::strtok(NULL, ":")) {
+      Repository* repo = new Repository();
+      repo->openRead(value);
+      indexes.push_back(repo);
+    }
+
+    // open corpus statistics db
+    FeatureStore corpusStats(corpusDbPath, true);
+
+    // open up all output feature storages for each mapping file we are accessing
+    vector<FeatureStore*> stores;
+    vector<string> mapFiles;
+    map<string, int> shardMap;
+    vector<int> shardIds;
+
+    // read in the mapping files given and construct a reverse mapping,
+    // i.e. doc -> shard, and create FeatureStore dbs for each shard
+    vector<string>::iterator it;
+    for(it = mapFiles.begin(); it != mapFiles.end(); ++it) {
+
+      // find the map file name, which is its shard id
+      size_t loc = (*it).find_last_of('/') + 1;
+      string shardIdStr = (*it).substr(loc);
+
+      // create output directory for the feature store dbs
+      const char* cPath = (dbPath+"/"+shardIdStr).c_str();
+      if (mkdir(cPath,0777) == -1) {
+        cerr << "Error creating output DB dir. Dir may already exist." << endl;
+        exit(EXIT_FAILURE);
+      }
+
+      // create feature store for shard
+      FeatureStore* store = new FeatureStore(dbPath+"/"+shardIdStr, false, ram/mapFiles.size());
+      stores.push_back(store);
+
+      // grab shard id and create reverse mapping between doc -> shard
+      // from contents in the file
+      int shardId = atoi(shardIdStr.c_str());
+      shardIds.push_back(shardId);
+
+      int lineNum = 0;
+      ifstream file;
+      file.open((*it).c_str());
+      string line;
+      while (getline(file, line)) {
+        shardMap[line] = shardId;
+        ++lineNum;
+      }
+      file.close();
+
+      // store the shard size (# of docs) feature
+      string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
+      store->putFeature((char*) featSize.c_str(), (double) lineNum, lineNum);
+    }
+
+    // get the total term length of the collection (for Indri scoring)
+    double totalTermCount = 0;
+    string totalTermCountKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+    corpusStats.getFeature((char*) totalTermCountKey.c_str(),
+        &totalTermCount);
+
+    // only create shard statistics for specified terms
+    set<string> stemsSeen;
+    int termCnt = 0;
+    for (it = terms.begin(); it != terms.end(); ++it) {
+      cout << "Processing: " << (*it) << endl;
+
+      termCnt++;
+      if (termCnt % 100 == 0) {
+        cout << "  Finished " << termCnt << " terms" << endl;
+      }
+
+      // stemify term
+      string stem = (indexes[0])->processTerm(*it);
+      if (stemsSeen.find(stem) != stemsSeen.end()) {
+        continue;
+      }
+      stemsSeen.insert(stem);
+
+      // if this is a stopword, skip
+      if (stem.size() == 0)
+        continue;
+
+      // get term ctf
+      double ctf;
+      string ctfKey(stem);
+      ctfKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+      corpusStats.getFeature((char*) ctfKey.c_str(), &ctf);
+
+      //track df for this term for each shard; initialize
+      map<int, shard_data> shardDataMap;
+
+      // for each index
+      vector<Repository*>::iterator rit;
+      for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
+
+        indri::collection::Repository::index_state state = (*rit)->indexes();
+        if (state->size() > 1) {
+          cout << "Index has more than 1 part. Can't deal with this, man.";
+          exit(EXIT_FAILURE);
+        }
+        Index* index = (*state)[0];
+        indri::thread::ScopedLock(index->iteratorLock());
+
+        // get inverted list iterator for this index
+        DocListIterator* docIter = index->docListIterator(stem);
+
+        // term not found
+        if (docIter == NULL)
+          continue;
+
+        // go through each doc in index containing the current term
+        docIter->startIteration();
+        TermData* termData = docIter->termData();
+
+        // calculate Sum(f) and Sum(f^2) top parts of eq (3) (4)
+        while (!docIter->finished()) {
+          DocListIterator::DocumentData* doc = docIter->currentEntry();
+
+          // get the CW external docno so we can find what shard the doc belongs to
+          string extDocNum = (*rit)->collection()->retrieveMetadatum(doc->document, "docno");
+          int currShardId = shardMap[extDocNum];
+
+          double length = index->documentLength(doc->document);
+          double tf = doc->positions.size();
+
+          // calulate Indri score feature and sum it up
+          double feat = calcIndriFeature(tf, ctf, totalTermCount, length);
+          shardDataMap[currShardId].f += feat;
+          shardDataMap[currShardId].f2 += pow(feat, 2);
+          shardDataMap[currShardId].shardDf += 1;
+
+          // keep track of this shard's minimum feature
+          if (feat < shardDataMap[currShardId].min) {
+            shardDataMap[currShardId].min = feat;
+          }
+          docIter->nextEntry();
+        } // end doc iter
+      } // end index iter
+
+      // add term info to correct shard dbs
+      for (int i = 0; i < shardIds.size(); i++)
+      {
+        int shardId = shardIds[i];
+        storeTermStats(stores[i], stem, ctf, shardDataMap[shardId].min,
+            shardDataMap[shardId].shardDf, shardDataMap[shardId].f,
+            shardDataMap[shardId].f2);
+
+      }
+
+    } // end term iter
+
+  } else if (strcmp(argv[1], "buildshard") == 0) {
 
     string dbPath = params["db"];
     string indexPath = params["index"];
