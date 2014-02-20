@@ -134,7 +134,7 @@ void collectShardStats(DocListIterator* docIter, TermData* termData, FeatureStor
   }
 
   double shardDf = termData->corpus.documentCount;
-  storeTermStats(store, termData->term, ctf, minFeat, shardDf, featSum, squaredFeatSum);
+  storeTermStats(store, termData->term, (int)ctf, minFeat, shardDf, featSum, squaredFeatSum);
 }
 
 // innards of buildcorpus
@@ -185,6 +185,11 @@ int main(int argc, char * argv[]) {
       tokenize(params["terms"], ":", &terms);
     }
 
+    vector<string> mapFiles;
+    if (params.find("mapFile") != params.end()) {
+      tokenize(params["mapFile"], ":", &mapFiles);
+    }
+
     // open all indri indexes; the 10/20 part indexes used
     vector<Repository*> indexes;
     char mutableLine[indexstr.size() + 1];
@@ -204,7 +209,6 @@ int main(int argc, char * argv[]) {
 
     // open up all output feature storages for each mapping file we are accessing
     vector<FeatureStore*> stores;
-    vector<string> mapFiles;
     map<string, int> shardMap;
     vector<int> shardIds;
 
@@ -337,7 +341,7 @@ int main(int argc, char * argv[]) {
       for (int i = 0; i < shardIds.size(); i++)
       {
         int shardId = shardIds[i];
-        storeTermStats(stores[i], stem, ctf, shardDataMap[shardId].min,
+        storeTermStats(stores[i], stem, (int)ctf, shardDataMap[shardId].min,
             shardDataMap[shardId].shardDf, shardDataMap[shardId].f,
             shardDataMap[shardId].f2);
 
