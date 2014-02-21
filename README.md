@@ -3,10 +3,10 @@ taily-cpp
 
 C++ implementation of Taily, a resource selection algorithm for selective search. Requires Indri search engine, Berkeley DB, and Boost. Please don't judge me; this is research code and horrible. :(
 
-#How to Build Taily 
+##How to Build Taily 
 Taily first needs to collect corpus statistics and create some data structures in order to be used in querying.
 
-## From indexed shards
+### From indexed shards
 The first way is to partition the collection into the desired shards and to index the shards (with Indri) and collect Taily statistics from these indexes. See below for details on parameter files.
 
 ```
@@ -15,7 +15,7 @@ $./Taily buildshard -p PARAM_FILE
 
 ```
 
-## From shard map files (and an index of the entire collection)
+### From shard map files (and an index of the entire collection)
 The second way requires an index of the entire collection (may be split into multiple indicies) and mapping files named 1, 2, 3, ... that contain the docno of the documents belonging to those shards (one per line). In this method, buildfrommap can generate statistics for multiple shards at a time. See below for details.
 
 ```
@@ -23,7 +23,7 @@ $./Taily buildcorpus -p PARAM_FILE
 $./Taily buildfrommap -p PARAM_FILE 
 ```
 
-#How to Run Taily
+##How to Run Taily
 
 If you just want a list of shard rankings, use this:
 ```
@@ -36,9 +36,9 @@ If you want a full retrieval, that is a selective search retrieval which runs a 
 $./TailyRunQuery INDRI_STYLE_PARAM_FILE
 ```
 
-#Parameter Files
+##Parameter Files
 
-##Commands using ./Taily
+###Commands using ./Taily
 
 Parameter files are simple key=value pairs. No space before or after '='! 
 
@@ -71,7 +71,7 @@ Parameter file for Taily run:
 * index: An indri index; used for stemming/term processing.
 * n_c: The n paramter for the Taily algorithm. Use 400 or so if you're not sure.
 
-## ./TailyRunQuery
+### ./TailyRunQuery
 
 Parameter file for TailyRunQuery is an XML file in style of Indri's IndriRunQuery file. It takes everything else an IndriRunQuery parameter file takes but also requires:
 
