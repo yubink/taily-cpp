@@ -10,6 +10,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
+#include <boost/unordered_map.hpp>
 
 #include "indri/QueryEnvironment.hpp"
 #include "indri/Repository.hpp"
@@ -175,7 +176,7 @@ int main(int argc, char * argv[]) {
     string indexstr = params["index"];
     string corpusDbPath = params["corpusDb"];
 
-    int ram = 2000;
+    int ram = 1500;
     if (params.find("ram") != params.end()) {
       ram = atoi(params["ram"].c_str());
     }
@@ -209,7 +210,7 @@ int main(int argc, char * argv[]) {
 
     // open up all output feature storages for each mapping file we are accessing
     vector<FeatureStore*> stores;
-    map<string, int> shardMap;
+    boost::unordered_map<string, int> shardMap;
     vector<int> shardIds;
 
     // read in the mapping files given and construct a reverse mapping,
@@ -252,6 +253,8 @@ int main(int argc, char * argv[]) {
       store->putFeature((char*) featSize.c_str(), (double) lineNum, lineNum);
     }
 
+    cout << "Finished reading shard map." << endl;
+
     // get the total term length of the collection (for Indri scoring)
     double totalTermCount = 0;
     string totalTermCountKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
@@ -287,11 +290,14 @@ int main(int argc, char * argv[]) {
       corpusStats.getFeature((char*) ctfKey.c_str(), &ctf);
 
       //track df for this term for each shard; initialize
-      map<int, shard_data> shardDataMap;
+      boost::unordered_map<int, shard_data> shardDataMap;
 
       // for each index
+      int idxCnt = 0;
       vector<Repository*>::iterator rit;
       for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
+        ++idxCnt;
+        cout << "  Index #" << idxCnt << endl;
 
         indri::collection::Repository::index_state state = (*rit)->indexes();
         if (state->size() > 1) {
@@ -299,7 +305,6 @@ int main(int argc, char * argv[]) {
           exit(EXIT_FAILURE);
         }
         Index* index = (*state)[0];
-        indri::thread::ScopedLock(index->iteratorLock());
 
         // get inverted list iterator for this index
         DocListIterator* docIter = index->docListIterator(stem);
@@ -309,32 +314,35 @@ int main(int argc, char * argv[]) {
           continue;
 
         // go through each doc in index containing the current term
-        docIter->startIteration();
-        TermData* termData = docIter->termData();
-
         // calculate Sum(f) and Sum(f^2) top parts of eq (3) (4)
-        while (!docIter->finished()) {
+        for (docIter->startIteration(); !docIter->finished(); docIter->nextEntry()) {
           DocListIterator::DocumentData* doc = docIter->currentEntry();
 
           // get the CW external docno so we can find what shard the doc belongs to
           string extDocNum = (*rit)->collection()->retrieveMetadatum(doc->document, "docno");
-          int currShardId = shardMap[extDocNum];
+
+          // find the shard id, if this doc belongs to any
+          boost::unordered_map<string, int>::iterator smit = shardMap.find(extDocNum);
+          if (smit == shardMap.end()) continue;
+          int currShardId = (*smit).second;
 
           double length = index->documentLength(doc->document);
           double tf = doc->positions.size();
 
           // calulate Indri score feature and sum it up
           double feat = calcIndriFeature(tf, ctf, totalTermCount, length);
-          shardDataMap[currShardId].f += feat;
-          shardDataMap[currShardId].f2 += pow(feat, 2);
-          shardDataMap[currShardId].shardDf += 1;
+          shard_data & currShard = shardDataMap[currShardId];
+          currShard.f += feat;
+          currShard.f2 += pow(feat,2);
+          currShard.shardDf += 1;
 
-          // keep track of this shard's minimum feature
-          if (feat < shardDataMap[currShardId].min) {
-            shardDataMap[currShardId].min = feat;
+          if (feat < currShard.min) {
+            currShard.min = feat;
           }
-          docIter->nextEntry();
         } // end doc iter
+        // free iterator to save RAM!
+        delete docIter;
+
       } // end index iter
 
       // add term info to correct shard dbs
@@ -574,6 +582,7 @@ int main(int argc, char * argv[]) {
           docIter->startIteration();
           TermData* termData = docIter->termData();
           collectCorpusStats(docIter, termData, &store);
+          delete docIter;
         }
       }
     }
