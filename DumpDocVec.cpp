@@ -51,7 +51,12 @@ int main(int argc, char * argv[]) {
   if (file.is_open()) {
 
     while (getline(file, line)) {
-      whitelist.push_back(repo.processTerm(line));
+      string stem = repo.processTerm(line);
+
+      // add if not stopword
+      if (stem.length() > 0) {
+        whitelist.push_back(stem);
+      }
     }
     file.close();
   }
