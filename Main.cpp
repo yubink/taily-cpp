@@ -10,6 +10,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
+#include <boost/unordered_map.hpp>
 
 #include "indri/QueryEnvironment.hpp"
 #include "indri/Repository.hpp"
