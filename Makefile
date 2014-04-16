@@ -1,8 +1,10 @@
 TAILY_TARGET=Taily
 INDRI_TARGET=TailyRunQuery
+DOCDUMP_TARGET=DumpDocVec
 COMMON_SOURCES=FeatureStore.cpp ShardRanker.cpp
 TAILY_SOURCES=Main.cpp
 INDRI_SOURCES=TailyRunQuery.cpp
+DOCDUMP_SOURCES=DumpDocVec.cpp
 CXX=g++
 
 ifdef OLDINDRI
@@ -22,22 +24,28 @@ endif
 COMMON_OBJECTS=$(COMMON_SOURCES:.cpp=.o)
 TAILY_OBJECTS=$(TAILY_SOURCES:.cpp=.o)
 INDRI_OBJECTS=$(INDRI_SOURCES:.cpp=.o)
+DOCDUMP_OBJECTS=$(DOCDUMP_SOURCES:.cpp=.o)
 
-all: taily indri
+all: taily indri docdump
 
 taily: $(TAILY_TARGET)
 
 indri: $(INDRI_TARGET)
+
+docdump: $(DOCDUMP_TARGET)
 
 $(TAILY_TARGET): $(TAILY_OBJECTS) $(COMMON_OBJECTS)
 	$(CXX) -o $@ $^ $(LDFLAGS)
 	
 $(INDRI_TARGET): $(INDRI_OBJECTS) $(COMMON_OBJECTS)
 	$(CXX) -o $@ $^ $(LDFLAGS)
+	
+$(DOCDUMP_TARGET): $(DOCDUMP_OBJECTS) $(COMMON_OBJECTS)
+	$(CXX) -o $@ $^ $(LDFLAGS)
 
 %.o: %.cpp %.h
 	$(CXX) $(CXXFLAGS) -o $@ -c $<
 
 clean:
-	rm -f $(TARGET) $(OBJECTS)
+	rm -f $(TAILY_TARGET) $(INDRI_TARGET) $(DOCDUMP_TARGET) $(COMMON_OBJECTS) $(TAILY_OBJECTS) $(INDRI_OBJECTS) $(DOCDUMP_OBJECTS)
 

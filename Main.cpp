@@ -160,6 +160,700 @@ void collectCorpusStats(DocListIterator* docIter, TermData* termData,
   store->addValFeature((char*) ctfFeatKey.c_str(), ctf, (int) ctf);
 }
 
+void buildFromMap(std::map<string, string>& params) {
+
+  string dbPath = params["db"]; // in this case, this will be a path to a folder
+  string indexstr = params["index"];
+  string corpusDbPath = params["corpusDb"];
+
+  int ram = 2000;
+  if (params.find("ram") != params.end()) {
+    ram = atoi(params["ram"].c_str());
+  }
+
+  vector<string> terms;
+  if (params.find("terms") != params.end()) {
+    tokenize(params["terms"], ":", &terms);
+  }
+
+  vector<string> mapFiles;
+  if (params.find("mapFile") != params.end()) {
+    tokenize(params["mapFile"], ":", &mapFiles);
+  }
+
+  // open all indri indexes; the 10/20 part indexes used
+  vector<Repository*> indexes;
+  char mutableLine[indexstr.size() + 1];
+  std::strcpy(mutableLine, indexstr.c_str());
+
+  // get all shard indexes and add to vector
+  for (char* value = std::strtok(mutableLine, ":");
+      value != NULL;
+      value = std::strtok(NULL, ":")) {
+    Repository* repo = new Repository();
+    repo->openRead(value);
+    indexes.push_back(repo);
+  }
+
+  // open corpus statistics db
+  FeatureStore corpusStats(corpusDbPath, true);
+
+  // open up all output feature storages for each mapping file we are accessing
+  vector<FeatureStore*> stores;
+  map<string, int> shardMap;
+  vector<int> shardIds;
+
+  // read in the mapping files given and construct a reverse mapping,
+  // i.e. doc -> shard, and create FeatureStore dbs for each shard
+  vector<string>::iterator it;
+  for(it = mapFiles.begin(); it != mapFiles.end(); ++it) {
+
+    // find the map file name, which is its shard id
+    size_t loc = (*it).find_last_of('/') + 1;
+    string shardIdStr = (*it).substr(loc);
+
+    // create output directory for the feature store dbs
+    const char* cPath = (dbPath+"/"+shardIdStr).c_str();
+    if (mkdir(cPath,0777) == -1) {
+      cerr << "Error creating output DB dir. Dir may already exist." << endl;
+      exit(EXIT_FAILURE);
+    }
+
+    // create feature store for shard
+    FeatureStore* store = new FeatureStore(dbPath+"/"+shardIdStr, false, ram/mapFiles.size());
+    stores.push_back(store);
+
+    // grab shard id and create reverse mapping between doc -> shard
+    // from contents in the file
+    int shardId = atoi(shardIdStr.c_str());
+    shardIds.push_back(shardId);
+
+    int lineNum = 0;
+    ifstream file;
+    file.open((*it).c_str());
+    string line;
+    while (getline(file, line)) {
+      shardMap[line] = shardId;
+      ++lineNum;
+    }
+    file.close();
+
+    // store the shard size (# of docs) feature
+    string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
+    store->putFeature((char*) featSize.c_str(), (double) lineNum, lineNum);
+  }
+
+  // get the total term length of the collection (for Indri scoring)
+  double totalTermCount = 0;
+  string totalTermCountKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+  corpusStats.getFeature((char*) totalTermCountKey.c_str(),
+      &totalTermCount);
+
+  // only create shard statistics for specified terms
+  set<string> stemsSeen;
+  int termCnt = 0;
+  for (it = terms.begin(); it != terms.end(); ++it) {
+
+    termCnt++;
+    if (termCnt % 100 == 0) {
+      cout << "  Finished " << termCnt << " terms" << endl;
+    }
+
+    // stemify term
+    string stem = (indexes[0])->processTerm(*it);
+    if (stemsSeen.find(stem) != stemsSeen.end()) {
+      continue;
+    }
+    stemsSeen.insert(stem);
+    cout << "Processing: " << (*it) << " (" << stem << ")" << endl;
+
+    // if this is a stopword, skip
+    if (stem.size() == 0)
+      continue;
+
+    // get term ctf
+    double ctf;
+    string ctfKey(stem);
+    ctfKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+    corpusStats.getFeature((char*) ctfKey.c_str(), &ctf);
+
+    //track df for this term for each shard; initialize
+    map<int, shard_data> shardDataMap;
+
+    // for each index
+    vector<Repository*>::iterator rit;
+    for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
+
+      indri::collection::Repository::index_state state = (*rit)->indexes();
+      if (state->size() > 1) {
+        cout << "Index has more than 1 part. Can't deal with this, man.";
+        exit(EXIT_FAILURE);
+      }
+      Index* index = (*state)[0];
+      indri::thread::ScopedLock(index->iteratorLock());
+
+      // get inverted list iterator for this index
+      DocListIterator* docIter = index->docListIterator(stem);
+
+      // term not found
+      if (docIter == NULL)
+        continue;
+
+      // go through each doc in index containing the current term
+      docIter->startIteration();
+      TermData* termData = docIter->termData();
+
+      // calculate Sum(f) and Sum(f^2) top parts of eq (3) (4)
+      while (!docIter->finished()) {
+        DocListIterator::DocumentData* doc = docIter->currentEntry();
+
+        // get the CW external docno so we can find what shard the doc belongs to
+        string extDocNum = (*rit)->collection()->retrieveMetadatum(doc->document, "docno");
+        int currShardId = shardMap[extDocNum];
+
+        double length = index->documentLength(doc->document);
+        double tf = doc->positions.size();
+
+        // calulate Indri score feature and sum it up
+        double feat = calcIndriFeature(tf, ctf, totalTermCount, length);
+        shardDataMap[currShardId].f += feat;
+        shardDataMap[currShardId].f2 += pow(feat, 2);
+        shardDataMap[currShardId].shardDf += 1;
+
+        // keep track of this shard's minimum feature
+        if (feat < shardDataMap[currShardId].min) {
+          shardDataMap[currShardId].min = feat;
+        }
+        docIter->nextEntry();
+      } // end doc iter
+    } // end index iter
+
+    // add term info to correct shard dbs
+    for (int i = 0; i < shardIds.size(); i++)
+    {
+      int shardId = shardIds[i];
+      // don't store empty terms
+      if (shardDataMap[shardId].shardDf == 0) continue;
+      storeTermStats(stores[i], stem, (int)ctf, shardDataMap[shardId].min,
+          shardDataMap[shardId].shardDf, shardDataMap[shardId].f,
+          shardDataMap[shardId].f2);
+
+    }
+
+  } // end term iter
+
+  // clean up
+  vector<FeatureStore*>::iterator fit;
+  for (fit = stores.begin(); fit != stores.end(); ++fit) {
+    delete (*fit);
+  }
+
+  vector<Repository*>::iterator rit;
+  for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
+    (*rit)->close();
+    delete (*rit);
+  }
+}
+
+void buildShard(std::map<string, string>& params) {
+
+  string dbPath = params["db"];
+  string indexPath = params["index"];
+  string corpusDbPath = params["corpusDb"];
+
+  int ram = 2000;
+  if (params.find("ram") != params.end()) {
+    ram = atoi(params["ram"].c_str());
+  }
+
+  vector<string> terms;
+  if (params.find("terms") != params.end()) {
+    tokenize(params["terms"], ":", &terms);
+  }
+
+  // open corpus statistics db
+  FeatureStore corpusStats(corpusDbPath, true);
+
+  // create and open the data store
+  FeatureStore store(dbPath, false, ram);
+
+  indri::collection::Repository repo;
+  repo.openRead(indexPath);
+
+  indri::collection::Repository::index_state state = repo.indexes();
+
+  if (state->size() > 1) {
+    cout << "Index has more than 1 part. Can't deal with this, man.";
+    exit(EXIT_FAILURE);
+  }
+
+  for(size_t i = 0; i < state->size(); i++) {
+    Index* index = (*state)[i];
+    indri::thread::ScopedLock( index->iteratorLock() );
+
+    cout << index->termCount() << " " << index->documentCount() << endl;
+
+    // get the total term length of the collection (for Indri scoring)
+    double totalTermCount = index->termCount();
+    string totalTermCountKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+    corpusStats.getFeature((char*)totalTermCountKey.c_str(), &totalTermCount);
+
+    // store the shard size (# of docs) feature
+    int shardSizeFeat = index->documentCount();
+    string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
+    store.putFeature((char*)featSize.c_str(), (double)shardSizeFeat, shardSizeFeat);
+
+    // if there are no term constraints, build all terms
+    if (terms.size() == 0) {
+      DocListFileIterator* iter = index->docListFileIterator();
+      iter->startIteration();
+
+      int termCnt = 0;
+      // for each stem in the index
+      while (!iter->finished()) {
+        termCnt++;
+        if (termCnt % 100000 == 0) {
+          cout << "  Finished " << termCnt << " terms" << endl;
+        }
+
+        DocListFileIterator::DocListData* entry = iter->currentEntry();
+        TermData* termData = entry->termData;
+        entry->iterator->startIteration();
+
+        collectShardStats(entry->iterator, termData, &corpusStats, &store,
+            index, totalTermCount);
+
+        iter->nextEntry();
+      }
+      delete iter;
+
+    } else {
+      // only create shard statistics for specified terms
+      set<string> stemsSeen;
+      vector<string>::iterator it;
+      int termCnt = 0;
+      for (it = terms.begin(); it != terms.end(); ++it) {
+        termCnt++;
+        if (termCnt % 100 == 0) {
+          cout << "  Finished " << termCnt << " terms" << endl;
+        }
+        // stemify term
+        string stem = repo.processTerm(*it);
+        if (stemsSeen.find(stem) != stemsSeen.end()) {
+          continue;
+        }
+        stemsSeen.insert(stem);
+
+        // if this is a stopword, skip
+        if (stem.size() == 0) continue;
+
+        DocListIterator* docIter = index->docListIterator(stem);
+
+        // term not found
+        if (docIter == NULL) continue;
+
+        docIter->startIteration();
+        TermData* termData = docIter->termData();
+        collectShardStats(docIter, termData, &corpusStats, &store,
+            index, totalTermCount);
+      }
+
+    }
+
+  }
+}
+
+void buildCorpus(std::map<string, string>& params) {
+  using namespace indri::collection;
+  using namespace indri::index;
+
+  string dbPath = params["db"];
+  string indexstr = params["index"];
+
+  int ram = 8000;
+  if (params.find("ram") != params.end()) {
+    ram = atoi(params["ram"].c_str());
+  }
+
+  vector<string> terms;
+  if (params.find("terms") != params.end()) {
+    tokenize(params["terms"], ":", &terms);
+  }
+
+  FeatureStore store(dbPath, false, ram);
+  vector<Repository*> indexes;
+
+  char mutableLine[indexstr.size() + 1];
+  std::strcpy(mutableLine, indexstr.c_str());
+
+  // get all shard indexes and add to vector
+  for (char* value = std::strtok(mutableLine, ":");
+      value != NULL;
+      value = std::strtok(NULL, ":")) {
+    Repository* repo = new Repository();
+    repo->openRead(value);
+    indexes.push_back(repo);
+  }
+
+  // go through all indexes and collect ctf and df statistics.
+  long totalTermCount = 0;
+  long totalDocCount = 0;
+
+  int idxCnt = 1;
+  vector<Repository*>::iterator it;
+  for (it = indexes.begin(); it != indexes.end(); ++it) {
+    cout << "Starting index " << idxCnt++ << endl;
+
+    // if it has more than one index, quit
+    Repository::index_state state = (*it)->indexes();
+    if (state->size() > 1) {
+      cout << "Index has more than 1 part. Can't deal with this, man.";
+      exit(EXIT_FAILURE);
+    }
+    Index* index = (*state)[0];
+
+    // add the total term length of shard
+    totalTermCount += index->termCount();
+    // add the shard size (# of docs)
+    totalDocCount += index->documentCount();
+
+    if (terms.size() == 0) {
+      DocListFileIterator* iter = index->docListFileIterator();
+      iter->startIteration();
+
+      int termCnt = 0;
+      // go through all terms in the index and collect df/ctf
+      while (!iter->finished()) {
+        termCnt++;
+        if (termCnt % 100000 == 0) {
+          cout << "  Finished " << termCnt << " terms" << endl;
+        }
+
+        DocListFileIterator::DocListData* entry = iter->currentEntry();
+        TermData* termData = entry->termData;
+        entry->iterator->startIteration();
+
+        collectCorpusStats(entry->iterator, termData, &store);
+        iter->nextEntry();
+      }
+      delete iter;
+
+    } else {
+
+      // only create shard statistics for specified terms
+      set<string> stemsSeen;
+
+      vector<string>::iterator tit;
+      int termCnt = 0;
+      for (tit = terms.begin(); tit != terms.end(); ++tit) {
+        termCnt++;
+        if (termCnt % 100 == 0) {
+          cout << "  Finished " << termCnt << " terms" << endl;
+        }
+        // stemify term; make sure we're not doing this again!
+        string stem = (*it)->processTerm(*tit);
+        if (stemsSeen.find(stem) != stemsSeen.end()) {
+          continue;
+        }
+        stemsSeen.insert(stem);
+
+        // if this is a stopword, skip
+        if (stem.size() == 0) continue;
+
+        DocListIterator* docIter = index->docListIterator(stem);
+
+        // term not found
+        if (docIter == NULL) continue;
+
+        docIter->startIteration();
+        TermData* termData = docIter->termData();
+        collectCorpusStats(docIter, termData, &store);
+      }
+    }
+  }
+
+  // add collection global features needed for shard ranking
+  string totalTermKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+  store.putFeature((char*)totalTermKey.c_str(), totalTermCount, FeatureStore::FREQUENT_TERMS+1);
+  string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
+  store.putFeature((char*)featSize.c_str(), totalDocCount, FeatureStore::FREQUENT_TERMS+1);
+}
+
+void mergeMin(std::map<string, string>& params) {
+  string dbstr = params["db"];
+  string index = params["index"];
+
+  // get list of shard statistic dbs
+  vector<string> dbs;
+  tokenize(dbstr, ":", &dbs);
+
+  // open dbs for the corpus store and each shard store
+  FeatureStore corpusStore(dbs[0], false);
+  vector<FeatureStore*> stores;
+  for (uint i = 1; i < dbs.size(); i++) {
+    stores.push_back(new FeatureStore(dbs[i], true));
+  }
+
+  int termCnt = 0;
+  // iterate through the database for all terms and find gloabl min feature
+  FeatureStore::TermIterator* termit = corpusStore.getTermIterator();
+  while (!termit->finished()) {
+    termCnt++;
+    if(termCnt % 100000 == 0) {
+      cout << "  Finished " << termCnt << " terms" << endl;
+    }
+
+    // get a stem and its ctf
+    pair<string,double> termAndCtf = termit->currrentEntry();
+    string stem = termAndCtf.first;
+    double ctf = termAndCtf.second;
+
+    // keep track of min feature
+    double globalMin = DBL_MAX;
+    string minFeatKey(stem);
+    minFeatKey.append(FeatureStore::MIN_FEAT_SUFFIX);
+
+    // for each shard, grab the share min feature from its stats db and find global min
+    vector<FeatureStore*>::iterator it;
+    for (it = stores.begin(); it != stores.end(); ++it) {
+      double currMin;
+      (*it)->getFeature((char*)minFeatKey.c_str(), &currMin);
+      if (currMin < globalMin) {
+        globalMin = currMin;
+      }
+    }
+
+    // store min feature for term
+    corpusStore.putFeature((char*)minFeatKey.c_str(), globalMin, (int)ctf);
+
+    termit->nextTerm();
+  }
+  delete termit;
+
+  vector<FeatureStore*>::iterator it;
+  for (it = stores.begin(); it != stores.end(); ++it) {
+    delete (*it);
+  }
+}
+
+void run(std::map<string, string>& params, char* queryFile) {
+  using namespace indri::collection;
+
+  string dbstr = params["db"];
+  string index = params["index"];
+  int n_c = atoi(params["n_c"].c_str());
+
+  // get list of shard statistic dbs
+  vector<string> dbs;
+  tokenize(dbstr, ":", &dbs);
+
+  // get indri index
+  Repository repo;
+  repo.openRead(index);
+
+  // initialize Taily ranker
+  ShardRanker ranker(dbs, &repo, n_c);
+
+  // get query file
+  ifstream qfile;
+  qfile.open(queryFile);
+
+  string line;
+  if (qfile.is_open()) {
+
+    while (getline(qfile, line)) {
+      char mutableLine[line.size() + 1];
+      std::strcpy(mutableLine, line.c_str());
+
+      char* qnum = std::strtok(mutableLine, ":");
+      char* query = std::strtok(NULL, ":");
+
+      vector<pair<int, double> > ranking;
+      if (query) {
+        ranker.rank(query, &ranking);
+      }
+
+      cout << qnum << "\t" << query << endl;
+      for(int i = 0; i < ranking.size(); i++) {
+        cout << ranking[i].first << "\t" << ranking[i].second << endl;
+      }
+      cout << endl;
+    }
+    qfile.close();
+  }
+}
+
+void buildFromDV(std::map<string, string>& params) {
+
+  string dbPath = params["db"]; //path to where taily dbs will be created
+  string dvFile = params["dvFile"];
+  string corpusStatsFile = params["corpusStatsFile"];
+
+  // shard mapping file sorted by docno
+  string mapFile = params["mapFile"];
+
+  // number of shards; shard names start from 1.
+  int numShards = atoi(params["numShards"].c_str());
+
+  int ram = 2000;
+  if (params.find("ram") != params.end()) {
+    ram = atoi(params["ram"].c_str());
+  }
+
+  vector<string> terms;
+  if (params.find("terms") != params.end()) {
+    tokenize(params["terms"], ":", &terms);
+  }
+
+  // keep track of shard statistics
+  map<int, map<string, shard_data> > shardData;
+  for (int i = 1; i <= numShards; ++i) {
+    shardData.insert(
+        std::pair<int, map<string, shard_data> >(i, map<string, shard_data>()));
+  }
+
+  // read in the term corpus statistics
+  map<string, int> termStats;
+
+  ifstream statsFile;
+  statsFile.open(corpusStatsFile.c_str());
+  string line;
+  if (!statsFile.is_open()) {
+    cerr << "Couldn't open term stats file";
+    exit(EXIT_FAILURE);
+  }
+  // first line is collection term size
+  getline(statsFile, line);
+  long totalTermCount = atol(line.c_str());
+
+  // all subsequent lines are terms and their term counts
+  while (getline(statsFile, line)) {
+    vector<string> pair;
+    tokenize(line, "\t", &pair);
+    termStats[pair[0]] = atoi(pair[1].c_str());
+
+    // initialize per-shard taily stats gathering data structure
+    for (int i = 1; i <= numShards; ++i) {
+      shardData[i].insert(std::pair<string, shard_data>(pair[0], shard_data()));
+    }
+  }
+  statsFile.close();
+
+
+  // open document vectors file and mapping file
+  ifstream docVecs;
+  docVecs.open(corpusStatsFile.c_str());
+  if (!docVecs.is_open()) {
+    cerr << "Couldn't open document vector file";
+    exit(EXIT_FAILURE);
+  }
+
+  ifstream mapping;
+  mapping.open(mapFile.c_str());
+  if (!mapping.is_open()) {
+    cerr << "Couldn't open shard map file";
+    exit(EXIT_FAILURE);
+  }
+
+  string mapline;
+  getline(mapping, mapline);
+  vector<string> mapPair;
+  tokenize(mapline, "\t", &mapPair);
+
+  // get the appropriate shard's data structure
+  int shardNum = atoi(mapPair[1].c_str());
+
+  // run through the document vector and document shard map file in parallel
+  // and gather taily statistics for the docs in the right shard assignment
+  string docVec;
+  while (getline(docVecs, docVec) && mapping) {
+    vector<string> triplet;
+    tokenize(docVec, "\t", &triplet);
+    string& docno = triplet[0];
+    int doclen = atoi(triplet[1].c_str());
+
+    // find the shard assignment of the current document
+    while (mapPair[0].compare(docno) < 0 && mapping) {
+      getline(mapping, mapline);
+      tokenize(mapline, "\t", &mapPair);
+    }
+
+    // then document couldn't be found in shard map
+    if (mapPair[0].compare(docno) != 0) {
+      cerr << "Couldn't find assignment for doc " << docno;
+      continue;
+    }
+
+    // get shard number of curr doc and get map of taily stats for the shard
+    shardNum = atoi(mapPair[1].c_str());
+    map<int, map<string, shard_data> >::iterator shardloc = shardData.find(shardNum);
+
+    if (shardloc == shardData.end()) {
+      cerr << "Bad shard id " << mapline;
+      exit(EXIT_FAILURE);
+    }
+
+    // get term vector for doc
+    vector<string> termVec;
+    tokenize(triplet[2], " ", &termVec);
+
+    for (uint i = 0; i < termVec.size(); ++i) {
+      vector<string> featPair;
+      tokenize(termVec[i], ":", &featPair);
+
+      string& term = featPair[0];
+      int tf = atoi(featPair[1].c_str());
+
+      // get the taily stats gathering struct for this term
+      map<string, shard_data>::iterator termloc = (*shardloc).second.find(term);
+      if (termloc == (*shardloc).second.end()) {
+        cerr << "Statistics for term missing: " << termVec[i] << "; in doc " << docVec;
+        exit(EXIT_FAILURE);
+      }
+
+      // calulate Indri score feature and gather the taily stats
+      double feat = calcIndriFeature(tf, termStats[term], totalTermCount, doclen);
+
+      (*termloc).second.shardDf += 1;
+      (*termloc).second.f += feat;
+      (*termloc).second.f2 += pow(feat, 2);
+
+      // keep track of this shard's minimum feature
+      if (feat < (*termloc).second.min) {
+        (*termloc).second.min = feat;
+      }
+    }
+  }
+  docVecs.close();
+  mapping.close();
+
+  // store all collected statistics, for each shard and term
+  for (int i = 1; i < numShards; ++i) {
+    char shardIdStr[126];
+    sprintf(shardIdStr,"%d",i);
+
+    // create output directory for the feature store dbs
+    const char* cPath = (dbPath+"/"+shardIdStr).c_str();
+    if (mkdir(cPath,0777) == -1) {
+      cerr << "Error creating output DB dir. Dir may already exist." << endl;
+      exit(EXIT_FAILURE);
+    }
+
+    // create feature store for shard
+    FeatureStore store(cPath, false, ram);
+
+    // for all terms, store the collected features
+    map<int, map<string, shard_data> >::iterator currShardMap = shardData.find(i);
+    for (map<string, shard_data>::iterator iter = (*currShardMap).second.begin();
+        iter != (*currShardMap).second.end(); ++iter) {
+      storeTermStats(&store, (*iter).first, termStats[(*iter).first],
+          (*iter).second.min, (*iter).second.shardDf, (*iter).second.f,
+          (*iter).second.f2);
+    }
+  }
+
+}
+
 int main(int argc, char * argv[]) {
   int MU = 2500;
 
@@ -170,522 +864,23 @@ int main(int argc, char * argv[]) {
   readParams(paramFile, &params);
 
   if (strcmp(argv[1], "buildfrommap") == 0) {
+    buildFromMap(params);
 
-    string dbPath = params["db"]; // in this case, this will be a path to a folder
-    string indexstr = params["index"];
-    string corpusDbPath = params["corpusDb"];
-
-    int ram = 2000;
-    if (params.find("ram") != params.end()) {
-      ram = atoi(params["ram"].c_str());
-    }
-
-    vector<string> terms;
-    if (params.find("terms") != params.end()) {
-      tokenize(params["terms"], ":", &terms);
-    }
-
-    vector<string> mapFiles;
-    if (params.find("mapFile") != params.end()) {
-      tokenize(params["mapFile"], ":", &mapFiles);
-    }
-
-    // open all indri indexes; the 10/20 part indexes used
-    vector<Repository*> indexes;
-    char mutableLine[indexstr.size() + 1];
-    std::strcpy(mutableLine, indexstr.c_str());
-
-    // get all shard indexes and add to vector
-    for (char* value = std::strtok(mutableLine, ":");
-        value != NULL;
-        value = std::strtok(NULL, ":")) {
-      Repository* repo = new Repository();
-      repo->openRead(value);
-      indexes.push_back(repo);
-    }
-
-    // open corpus statistics db
-    FeatureStore corpusStats(corpusDbPath, true);
-
-    // open up all output feature storages for each mapping file we are accessing
-    vector<FeatureStore*> stores;
-    map<string, int> shardMap;
-    vector<int> shardIds;
-
-    // read in the mapping files given and construct a reverse mapping,
-    // i.e. doc -> shard, and create FeatureStore dbs for each shard
-    vector<string>::iterator it;
-    for(it = mapFiles.begin(); it != mapFiles.end(); ++it) {
-
-      // find the map file name, which is its shard id
-      size_t loc = (*it).find_last_of('/') + 1;
-      string shardIdStr = (*it).substr(loc);
-
-      // create output directory for the feature store dbs
-      const char* cPath = (dbPath+"/"+shardIdStr).c_str();
-      if (mkdir(cPath,0777) == -1) {
-        cerr << "Error creating output DB dir. Dir may already exist." << endl;
-        exit(EXIT_FAILURE);
-      }
-
-      // create feature store for shard
-      FeatureStore* store = new FeatureStore(dbPath+"/"+shardIdStr, false, ram/mapFiles.size());
-      stores.push_back(store);
-
-      // grab shard id and create reverse mapping between doc -> shard
-      // from contents in the file
-      int shardId = atoi(shardIdStr.c_str());
-      shardIds.push_back(shardId);
-
-      int lineNum = 0;
-      ifstream file;
-      file.open((*it).c_str());
-      string line;
-      while (getline(file, line)) {
-        shardMap[line] = shardId;
-        ++lineNum;
-      }
-      file.close();
-
-      // store the shard size (# of docs) feature
-      string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
-      store->putFeature((char*) featSize.c_str(), (double) lineNum, lineNum);
-    }
-
-    // get the total term length of the collection (for Indri scoring)
-    double totalTermCount = 0;
-    string totalTermCountKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-    corpusStats.getFeature((char*) totalTermCountKey.c_str(),
-        &totalTermCount);
-
-    // only create shard statistics for specified terms
-    set<string> stemsSeen;
-    int termCnt = 0;
-    for (it = terms.begin(); it != terms.end(); ++it) {
-
-      termCnt++;
-      if (termCnt % 100 == 0) {
-        cout << "  Finished " << termCnt << " terms" << endl;
-      }
-
-      // stemify term
-      string stem = (indexes[0])->processTerm(*it);
-      if (stemsSeen.find(stem) != stemsSeen.end()) {
-        continue;
-      }
-      stemsSeen.insert(stem);
-      cout << "Processing: " << (*it) << " (" << stem << ")" << endl;
-
-      // if this is a stopword, skip
-      if (stem.size() == 0)
-        continue;
-
-      // get term ctf
-      double ctf;
-      string ctfKey(stem);
-      ctfKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-      corpusStats.getFeature((char*) ctfKey.c_str(), &ctf);
-
-      //track df for this term for each shard; initialize
-      map<int, shard_data> shardDataMap;
-
-      // for each index
-      vector<Repository*>::iterator rit;
-      for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
-
-        indri::collection::Repository::index_state state = (*rit)->indexes();
-        if (state->size() > 1) {
-          cout << "Index has more than 1 part. Can't deal with this, man.";
-          exit(EXIT_FAILURE);
-        }
-        Index* index = (*state)[0];
-        indri::thread::ScopedLock(index->iteratorLock());
-
-        // get inverted list iterator for this index
-        DocListIterator* docIter = index->docListIterator(stem);
-
-        // term not found
-        if (docIter == NULL)
-          continue;
-
-        // go through each doc in index containing the current term
-        docIter->startIteration();
-        TermData* termData = docIter->termData();
-
-        // calculate Sum(f) and Sum(f^2) top parts of eq (3) (4)
-        while (!docIter->finished()) {
-          DocListIterator::DocumentData* doc = docIter->currentEntry();
-
-          // get the CW external docno so we can find what shard the doc belongs to
-          string extDocNum = (*rit)->collection()->retrieveMetadatum(doc->document, "docno");
-          int currShardId = shardMap[extDocNum];
-
-          double length = index->documentLength(doc->document);
-          double tf = doc->positions.size();
-
-          // calulate Indri score feature and sum it up
-          double feat = calcIndriFeature(tf, ctf, totalTermCount, length);
-          shardDataMap[currShardId].f += feat;
-          shardDataMap[currShardId].f2 += pow(feat, 2);
-          shardDataMap[currShardId].shardDf += 1;
-
-          // keep track of this shard's minimum feature
-          if (feat < shardDataMap[currShardId].min) {
-            shardDataMap[currShardId].min = feat;
-          }
-          docIter->nextEntry();
-        } // end doc iter
-      } // end index iter
-
-      // add term info to correct shard dbs
-      for (int i = 0; i < shardIds.size(); i++)
-      {
-        int shardId = shardIds[i];
-        // don't store empty terms
-        if (shardDataMap[shardId].shardDf == 0) continue;
-        storeTermStats(stores[i], stem, (int)ctf, shardDataMap[shardId].min,
-            shardDataMap[shardId].shardDf, shardDataMap[shardId].f,
-            shardDataMap[shardId].f2);
-
-      }
-
-    } // end term iter
-
-    // clean up
-    vector<FeatureStore*>::iterator fit;
-    for (fit = stores.begin(); fit != stores.end(); ++fit) {
-      delete (*fit);
-    }
-
-    vector<Repository*>::iterator rit;
-    for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
-      (*rit)->close();
-      delete (*rit);
-    }
+  } else if (strcmp(argv[1], "buildfromdv") == 0) {
+    // build taily corpus statistics from document vector file generated by DumpDocVec.cpp
+    buildFromDV(params);
 
   } else if (strcmp(argv[1], "buildshard") == 0) {
+    buildShard(params);
 
-    string dbPath = params["db"];
-    string indexPath = params["index"];
-    string corpusDbPath = params["corpusDb"];
-
-    int ram = 2000;
-    if (params.find("ram") != params.end()) {
-      ram = atoi(params["ram"].c_str());
-    }
-
-    vector<string> terms;
-    if (params.find("terms") != params.end()) {
-      tokenize(params["terms"], ":", &terms);
-    }
-
-    // open corpus statistics db
-    FeatureStore corpusStats(corpusDbPath, true);
-
-    // create and open the data store
-    FeatureStore store(dbPath, false, ram);
-
-    indri::collection::Repository repo;
-    repo.openRead(indexPath);
-
-    indri::collection::Repository::index_state state = repo.indexes();
-
-    if (state->size() > 1) {
-      cout << "Index has more than 1 part. Can't deal with this, man.";
-      exit(EXIT_FAILURE);
-    }
-
-    for(size_t i = 0; i < state->size(); i++) {
-      Index* index = (*state)[i];
-      indri::thread::ScopedLock( index->iteratorLock() );
-
-      cout << index->termCount() << " " << index->documentCount() << endl;
-
-      // get the total term length of the collection (for Indri scoring)
-      double totalTermCount = index->termCount();
-      string totalTermCountKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-      corpusStats.getFeature((char*)totalTermCountKey.c_str(), &totalTermCount);
-
-      // store the shard size (# of docs) feature
-      int shardSizeFeat = index->documentCount();
-      string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
-      store.putFeature((char*)featSize.c_str(), (double)shardSizeFeat, shardSizeFeat);
-
-      // if there are no term constraints, build all terms
-      if (terms.size() == 0) {
-        DocListFileIterator* iter = index->docListFileIterator();
-        iter->startIteration();
-
-        int termCnt = 0;
-        // for each stem in the index
-        while (!iter->finished()) {
-          termCnt++;
-          if (termCnt % 100000 == 0) {
-            cout << "  Finished " << termCnt << " terms" << endl;
-          }
-
-          DocListFileIterator::DocListData* entry = iter->currentEntry();
-          TermData* termData = entry->termData;
-          entry->iterator->startIteration();
-
-          collectShardStats(entry->iterator, termData, &corpusStats, &store,
-              index, totalTermCount);
-
-          iter->nextEntry();
-        }
-        delete iter;
-
-      } else {
-        // only create shard statistics for specified terms
-        set<string> stemsSeen;
-        vector<string>::iterator it;
-        int termCnt = 0;
-        for (it = terms.begin(); it != terms.end(); ++it) {
-          termCnt++;
-          if (termCnt % 100 == 0) {
-            cout << "  Finished " << termCnt << " terms" << endl;
-          }
-          // stemify term
-          string stem = repo.processTerm(*it);
-          if (stemsSeen.find(stem) != stemsSeen.end()) {
-            continue;
-          }
-          stemsSeen.insert(stem);
-
-          // if this is a stopword, skip
-          if (stem.size() == 0) continue;
-
-          DocListIterator* docIter = index->docListIterator(stem);
-
-          // term not found
-          if (docIter == NULL) continue;
-
-          docIter->startIteration();
-          TermData* termData = docIter->termData();
-          collectShardStats(docIter, termData, &corpusStats, &store,
-              index, totalTermCount);
-        }
-
-      }
-
-    }
   } else if (strcmp(argv[1], "buildcorpus") == 0) {
-    using namespace indri::collection;
-    using namespace indri::index;
-
-    string dbPath = params["db"];
-    string indexstr = params["index"];
-
-    int ram = 8000;
-    if (params.find("ram") != params.end()) {
-      ram = atoi(params["ram"].c_str());
-    }
-
-    vector<string> terms;
-    if (params.find("terms") != params.end()) {
-      tokenize(params["terms"], ":", &terms);
-    }
-
-    FeatureStore store(dbPath, false, ram);
-    vector<Repository*> indexes;
-
-    char mutableLine[indexstr.size() + 1];
-    std::strcpy(mutableLine, indexstr.c_str());
-
-    // get all shard indexes and add to vector
-    for (char* value = std::strtok(mutableLine, ":"); 
-        value != NULL; 
-        value = std::strtok(NULL, ":")) {
-      Repository* repo = new Repository();
-      repo->openRead(value);
-      indexes.push_back(repo);
-    }
-
-    // go through all indexes and collect ctf and df statistics.
-    long totalTermCount = 0;
-    long totalDocCount = 0;
-
-    int idxCnt = 1;
-    vector<Repository*>::iterator it;
-    for (it = indexes.begin(); it != indexes.end(); ++it) {
-      cout << "Starting index " << idxCnt++ << endl;
-
-      // if it has more than one index, quit
-      Repository::index_state state = (*it)->indexes();
-      if (state->size() > 1) {
-        cout << "Index has more than 1 part. Can't deal with this, man.";
-        exit(EXIT_FAILURE);
-      }
-      Index* index = (*state)[0];
-
-      // add the total term length of shard
-      totalTermCount += index->termCount();
-      // add the shard size (# of docs)
-      totalDocCount += index->documentCount();
-
-      if (terms.size() == 0) {
-        DocListFileIterator* iter = index->docListFileIterator();
-        iter->startIteration();
-
-        int termCnt = 0;
-        // go through all terms in the index and collect df/ctf
-        while (!iter->finished()) {
-          termCnt++;
-          if (termCnt % 100000 == 0) {
-            cout << "  Finished " << termCnt << " terms" << endl;
-          }
-
-          DocListFileIterator::DocListData* entry = iter->currentEntry();
-          TermData* termData = entry->termData;
-          entry->iterator->startIteration();
-
-          collectCorpusStats(entry->iterator, termData, &store);
-          iter->nextEntry();
-        }
-        delete iter;
-
-      } else {
-
-        // only create shard statistics for specified terms
-        set<string> stemsSeen;
-
-        vector<string>::iterator tit;
-        int termCnt = 0;
-        for (tit = terms.begin(); tit != terms.end(); ++tit) {
-          termCnt++;
-          if (termCnt % 100 == 0) {
-            cout << "  Finished " << termCnt << " terms" << endl;
-          }
-          // stemify term; make sure we're not doing this again!
-          string stem = (*it)->processTerm(*tit);
-          if (stemsSeen.find(stem) != stemsSeen.end()) {
-            continue;
-          }
-          stemsSeen.insert(stem);
-
-          // if this is a stopword, skip
-          if (stem.size() == 0) continue;
-
-          DocListIterator* docIter = index->docListIterator(stem);
-
-          // term not found
-          if (docIter == NULL) continue;
-
-          docIter->startIteration();
-          TermData* termData = docIter->termData();
-          collectCorpusStats(docIter, termData, &store);
-        }
-      }
-    }
-
-    // add collection global features needed for shard ranking
-    string totalTermKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-    store.putFeature((char*)totalTermKey.c_str(), totalTermCount, FeatureStore::FREQUENT_TERMS+1);
-    string featSize(FeatureStore::SIZE_FEAT_SUFFIX);
-    store.putFeature((char*)featSize.c_str(), totalDocCount, FeatureStore::FREQUENT_TERMS+1);
+    buildCorpus(params);
 
   } else if (strcmp(argv[1], "mergemin") == 0) {
-    string dbstr = params["db"];
-    string index = params["index"];
-
-    // get list of shard statistic dbs
-    vector<string> dbs;
-    tokenize(dbstr, ":", &dbs);
-
-    // open dbs for the corpus store and each shard store
-    FeatureStore corpusStore(dbs[0], false);
-    vector<FeatureStore*> stores;
-    for (uint i = 1; i < dbs.size(); i++) {
-      stores.push_back(new FeatureStore(dbs[i], true));
-    }
-
-    int termCnt = 0;
-    // iterate through the database for all terms and find gloabl min feature
-    FeatureStore::TermIterator* termit = corpusStore.getTermIterator();
-    while (!termit->finished()) {
-      termCnt++;
-      if(termCnt % 100000 == 0) {
-        cout << "  Finished " << termCnt << " terms" << endl;
-      }
-        
-      // get a stem and its ctf
-      pair<string,double> termAndCtf = termit->currrentEntry();
-      string stem = termAndCtf.first;
-      double ctf = termAndCtf.second;
-
-      // keep track of min feature
-      double globalMin = DBL_MAX;
-      string minFeatKey(stem);
-      minFeatKey.append(FeatureStore::MIN_FEAT_SUFFIX);
-
-      // for each shard, grab the share min feature from its stats db and find global min
-      vector<FeatureStore*>::iterator it;
-      for (it = stores.begin(); it != stores.end(); ++it) {
-        double currMin;
-        (*it)->getFeature((char*)minFeatKey.c_str(), &currMin);
-        if (currMin < globalMin) {
-          globalMin = currMin;
-        }
-      }
-
-      // store min feature for term
-      corpusStore.putFeature((char*)minFeatKey.c_str(), globalMin, (int)ctf);
-
-      termit->nextTerm();
-    }
-    delete termit;
-
-    vector<FeatureStore*>::iterator it;
-    for (it = stores.begin(); it != stores.end(); ++it) {
-      delete (*it);
-    }
+    mergeMin(params);
 
   } else if (strcmp(argv[1], "run") == 0) {
-    using namespace indri::collection;
-
-    string dbstr = params["db"];
-    string index = params["index"];
-    int n_c = atoi(params["n_c"].c_str());
-
-    // get list of shard statistic dbs
-    vector<string> dbs;
-    tokenize(dbstr, ":", &dbs);
-
-    // get indri index
-    Repository repo;
-    repo.openRead(index);
-
-    // initialize Taily ranker
-    ShardRanker ranker(dbs, &repo, n_c);
-
-    // get query file
-    char* queryFile = getOption(argv, argv + argc, "-q");
-    ifstream qfile;
-    qfile.open(queryFile);
-
-    string line;
-    if (qfile.is_open()) {
-
-      while (getline(qfile, line)) {
-        char mutableLine[line.size() + 1];
-        std::strcpy(mutableLine, line.c_str());
-
-        char* qnum = std::strtok(mutableLine, ":");
-        char* query = std::strtok(NULL, ":");
-
-        vector<pair<int, double> > ranking;
-        if (query) {
-          ranker.rank(query, &ranking);
-        }
-
-        cout << qnum << "\t" << query << endl;
-        for(int i = 0; i < ranking.size(); i++) {
-          cout << ranking[i].first << "\t" << ranking[i].second << endl;
-        }
-        cout << endl;
-      }
-      qfile.close();
-    }
+    run(params, getOption(argv, argv + argc, "-q"));
 
   } else {
     std::cout << "Unrecognized option." << std::endl;
