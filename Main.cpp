@@ -709,11 +709,6 @@ void buildFromDV(std::map<string, string>& params) {
     ram = atoi(params["ram"].c_str());
   }
 
-  vector<string> terms;
-  if (params.find("terms") != params.end()) {
-    tokenize(params["terms"], ":", &terms);
-  }
-
   // keep track of shard statistics
   map<int, map<string, shard_data> > shardData;
   for (int i = 1; i <= numShards; ++i) {
@@ -728,7 +723,7 @@ void buildFromDV(std::map<string, string>& params) {
   statsFile.open(corpusStatsFile.c_str());
   string line;
   if (!statsFile.is_open()) {
-    cerr << "Couldn't open term stats file";
+    cerr << "Couldn't open term stats file" << endl;
     exit(EXIT_FAILURE);
   }
   // first line is collection term size
@@ -751,16 +746,16 @@ void buildFromDV(std::map<string, string>& params) {
 
   // open document vectors file and mapping file
   ifstream docVecs;
-  docVecs.open(corpusStatsFile.c_str());
+  docVecs.open(dvFile.c_str());
   if (!docVecs.is_open()) {
-    cerr << "Couldn't open document vector file";
+    cerr << "Couldn't open document vector file" << endl;
     exit(EXIT_FAILURE);
   }
 
   ifstream mapping;
   mapping.open(mapFile.c_str());
   if (!mapping.is_open()) {
-    cerr << "Couldn't open shard map file";
+    cerr << "Couldn't open shard map file" << endl;
     exit(EXIT_FAILURE);
   }
 
@@ -783,13 +778,14 @@ void buildFromDV(std::map<string, string>& params) {
 
     // find the shard assignment of the current document
     while (mapPair[0].compare(docno) < 0 && mapping) {
+      mapPair.clear();
       getline(mapping, mapline);
       tokenize(mapline, "\t", &mapPair);
     }
 
     // then document couldn't be found in shard map
     if (mapPair[0].compare(docno) != 0) {
-      cerr << "Couldn't find assignment for doc " << docno;
+      cerr << "Couldn't find assignment for doc " << docno << endl;
       continue;
     }
 
@@ -798,7 +794,7 @@ void buildFromDV(std::map<string, string>& params) {
     map<int, map<string, shard_data> >::iterator shardloc = shardData.find(shardNum);
 
     if (shardloc == shardData.end()) {
-      cerr << "Bad shard id " << mapline;
+      cerr << "Bad shard id " << mapline << endl;
       exit(EXIT_FAILURE);
     }
 
@@ -816,7 +812,7 @@ void buildFromDV(std::map<string, string>& params) {
       // get the taily stats gathering struct for this term
       map<string, shard_data>::iterator termloc = (*shardloc).second.find(term);
       if (termloc == (*shardloc).second.end()) {
-        cerr << "Statistics for term missing: " << termVec[i] << "; in doc " << docVec;
+        cerr << "Statistics for term missing: " << termVec[i] << "; in doc " << docVec << endl;
         exit(EXIT_FAILURE);
       }
 
@@ -837,7 +833,7 @@ void buildFromDV(std::map<string, string>& params) {
   mapping.close();
 
   // store all collected statistics, for each shard and term
-  for (int i = 1; i < numShards; ++i) {
+  for (int i = 1; i <= numShards; ++i) {
     char shardIdStr[126];
     sprintf(shardIdStr,"%d",i);
 
