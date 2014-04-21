@@ -17,6 +17,7 @@
 using namespace indri::index;
 using namespace indri::collection;
 using namespace indri::api;
+using namespace lemur::api;
 
 char* getOption(char ** begin, char ** end, const std::string & option) {
   char ** itr = std::find(begin, end, option);
@@ -40,9 +41,19 @@ int main(int argc, char * argv[]) {
   Repository repo;
   repo.openRead(indexPath);
 
+  indri::collection::Repository::index_state state = repo.indexes();
+  if (state->size() > 1) {
+    cout << "Index has more than 1 part. Can't deal with this, man.";
+    exit(EXIT_FAILURE);
+  }
+  Index* index = (*state)[0];
+
   // get file with list of terms we're interested in
   char* termFile = getOption(argv, argv + argc, "-t");
-  vector<string> whitelist;
+  vector<TERMID_T> whitelist;
+
+  // keep track of which term ids map to which stems
+  std::map<int, std::string> termIDStringMap;
 
   // tokenize the term whitelist and process the term
   ifstream file;
@@ -51,22 +62,22 @@ int main(int argc, char * argv[]) {
   if (file.is_open()) {
 
     while (getline(file, line)) {
+      // stem/stop terms (depending on index settings)
       string stem = repo.processTerm(line);
 
-      // add if not stopword
-      if (stem.length() > 0) {
-        whitelist.push_back(stem);
+      // skip stopwords
+      if (stem.length() <= 0) {
+        continue;
       }
+
+      // convert stem to termID and keep track of mapping
+      TERMID_T termID = index->term(stem);
+      termIDStringMap[termID] = stem;
+      whitelist.push_back(termID);
     }
     file.close();
   }
 
-  indri::collection::Repository::index_state state = repo.indexes();
-  if (state->size() > 1) {
-    cout << "Index has more than 1 part. Can't deal with this, man.";
-    exit(EXIT_FAILURE);
-  }
-  Index* index = (*state)[0];
   indri::thread::ScopedLock(index->iteratorLock());
 
   // output term counts; collection size and ctf for all whitelist terms
@@ -78,7 +89,8 @@ int main(int argc, char * argv[]) {
 
   termStats << index->termCount() << endl;
   for (uint i = 0; i < whitelist.size(); i++) {
-    termStats << whitelist[i] << "\t" << index->termCount(whitelist[i]) << endl;
+    string& currTerm = termIDStringMap[whitelist[i]];
+    termStats << currTerm << "\t" << index->termCount(currTerm) << endl;
   }
   termStats.close();
 
@@ -93,7 +105,6 @@ int main(int argc, char * argv[]) {
   termlistIt->startIteration();
 
   lemur::api::DOCID_T intDocno = 0;
-  std::map<int, std::string> termIDStringMap;
 
   // dump document vectors
   while(!termlistIt->finished()) {
@@ -101,24 +112,21 @@ int main(int argc, char * argv[]) {
 
     // construct document vector object from extracted termlist
     TermList* termList = termlistIt->currentEntry();
-    DocumentVector result(index, termList, termIDStringMap);
-
-    vector<int> pos = result.positions();
-    vector<string> stems = result.stems();
+    const indri::utility::greedy_vector<int>& pos = termList->terms();
 
     // initialize map for counting stems in this doc (only care about whitelist terms)
-    std::map<std::string, int> stemCount;
-    for(vector<string>::iterator termIt = whitelist.begin(); termIt != whitelist.end(); termIt++) {
+    std::map<TERMID_T, int> stemCount;
+    for(vector<TERMID_T>::iterator termIt = whitelist.begin(); termIt != whitelist.end(); termIt++) {
       stemCount[*termIt] = 0;
     }
 
     // count up stems
     bool hasWhitelist = false;
-    for(vector<int>::iterator posIt = pos.begin(); posIt != pos.end(); posIt++) {
-      string& stem = stems[(*posIt)];
-      if (stemCount.find(stem) != stemCount.end()) {
+    for(size_t i = 0; i < pos.size(); ++i) {
+      std::map<TERMID_T, int>::iterator loc = stemCount.find(pos[i]);
+      if (loc != stemCount.end()) {
         hasWhitelist = true;
-        stemCount[stem] += 1;
+        loc->second += 1;
       }
     }
 
@@ -132,10 +140,10 @@ int main(int argc, char * argv[]) {
       docsOut << pos.size() << "\t";
 
       // go through words of interest and output counts (that are bigger than 0)
-      for(vector<string>::iterator termIt = whitelist.begin(); termIt != whitelist.end(); termIt++) {
-        std::map<std::string, int>::iterator loc = stemCount.find(*termIt);
+      for(vector<TERMID_T>::iterator termIt = whitelist.begin(); termIt != whitelist.end(); termIt++) {
+        std::map<TERMID_T, int>::iterator loc = stemCount.find(*termIt);
         if (loc != stemCount.end() && (*loc).second > 0) {
-          docsOut << *termIt << ":" << stemCount[*termIt] << " ";
+          docsOut << termIDStringMap[*termIt] << ":" << stemCount[*termIt] << " ";
         }
       }
       docsOut << endl;
