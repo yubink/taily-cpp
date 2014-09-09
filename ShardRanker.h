@@ -22,6 +22,8 @@ private:
   // a single indri index built the same way; just for stemming term
   indri::collection::Repository* _repo;
 
+  vector<std::string> _shardIds;
+
   // number of shards
   uint _numShards;
 
@@ -43,7 +45,7 @@ public:
   virtual ~ShardRanker();
 
   void init();
-  void rank(string query, vector<pair<int, double> >* ranking);
+  void rank(string query, vector<pair<string, double> >* ranking);
 };
 
 #endif /* SHARDRANKER_H_ */

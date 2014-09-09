@@ -8,12 +8,19 @@
 #include "ShardRanker.h"
 #include <math.h>
 #include <boost/math/distributions/gamma.hpp>
+#include "boost/filesystem.hpp"
+
+using namespace boost::filesystem;
 
 ShardRanker::ShardRanker(vector<string> dbPaths,
     indri::collection::Repository* repo, uint n_c) :
     _repo(repo), _numShards(dbPaths.size() - 1), _n_c(n_c) {
   for (uint i = 0; i < dbPaths.size(); i++) {
     _stores.push_back(new FeatureStore(dbPaths[i], true));
+
+    // get a mapping between integer ids which we use internally and the external shardname
+    path dbPath(dbPaths[i]);
+    _shardIds.push_back(dbPath.filename().string());
   }
 }
 
@@ -182,11 +189,12 @@ void ShardRanker::_getAll(vector<string>& stems, double* all) {
 }
 
 //reverse sort order
-bool shardPairSort(pair<int, double> i, pair<int, double> j) {
+bool shardPairSort(pair<string, double> i, pair<string, double> j) {
   return (i.second > j.second);
 }
 
-void ShardRanker::rank(string query, vector<pair<int, double> >* ranking) {
+void ShardRanker::rank(string query, vector<pair<string, double> >* ranking) {
+  // +1 because 0 stands for central db
   double queryMean[_numShards + 1];
   double queryVar[_numShards + 1];
   bool hasATerm[_numShards + 1]; // to mark shards that have at least one doc for one query term
@@ -214,7 +222,7 @@ void ShardRanker::rank(string query, vector<pair<int, double> >* ranking) {
     // return the shard with the document with n_i = 1
     for (int i = 1; i < _numShards + 1; i++) {
       if (hasATerm[i]) {
-        ranking->push_back(make_pair(i, 1));
+        ranking->push_back(make_pair(_shardIds[i-1], 1));
         break;
       }
     }
@@ -264,13 +272,13 @@ void ShardRanker::rank(string query, vector<pair<int, double> >* ranking) {
     // based on the mean of the shard (which is the score of the single doc), n_i is either 0 or 1
     if (queryVar[i] < 1e-10 && hasATerm[i]) {
       if (queryMean[i] >= s_c) {
-        ranking->push_back(make_pair(i, 1));
+        ranking->push_back(make_pair(_shardIds[i-1], 1));
       }
     } else {
       // do normal Taily stuff pre-normalized Eq (12)
       boost::math::gamma_distribution<> shardGamma(k[i], theta[i]);
       double p_i = boost::math::cdf(complement(shardGamma, s_c));
-      ranking->push_back(make_pair(i, all[i] * p_i));
+      ranking->push_back(make_pair(_shardIds[i-1], all[i] * p_i));
     }
   }
 
@@ -285,7 +293,7 @@ void ShardRanker::rank(string query, vector<pair<int, double> >* ranking) {
   double norm = _n_c / sum;
 
   // normalize shard scores Eq (12)
-  vector<pair<int, double> >::iterator nit;
+  vector<pair<string, double> >::iterator nit;
   for (nit = ranking->begin(); nit != ranking->end(); ++nit) {
     (*nit).second = (*nit).second * norm;
   }

@@ -41,6 +41,8 @@
 
 #include <queue>
 
+using namespace std;
+
 static bool copy_parameters_to_string_vector(std::vector<std::string>& vec,
     indri::api::Parameters p, const std::string& parameterName) {
   if (!p.exists(parameterName))
@@ -460,14 +462,14 @@ bool cmp_func(const std::pair<double, int>& A,
 // <0, host:port> or <1, index-path> ie, 0 is for server and 1 is for daemon
 // -1 is invalid
 void load_daemons(indri::api::Parameters& p,
-    std::map<int, std::pair<std::string, int> >& daemons) {
+    std::map<string, std::pair<std::string, int> >& daemons) {
 
   for (size_t i = 0; i < p.size(); i++) {
     indri::api::Parameters thisDaemon = p[i];
 
     if (!thisDaemon.exists("shard"))
       LEMUR_THROW( LEMUR_MISSING_PARAMETER_ERROR, "Missing shard parameter");
-    int shard = thisDaemon["shard"];
+    string shard = thisDaemon["shard"];
 
     if (thisDaemon.exists("index"))
       daemons[shard] = std::make_pair(std::string(thisDaemon["index"]), 1);
@@ -549,7 +551,7 @@ int main(int argc, char * argv[]) {
     std::fstream trecout(trecOutput.c_str(), std::ios::out);
 
     // read the mapping <shard-daemon> from the parameter file
-    std::map<int, std::pair<std::string, int> > daemons;
+    std::map<string, std::pair<std::string, int> > daemons;
     indri::api::Parameters parameterDaemons = param["daemon"];
     load_daemons(parameterDaemons, daemons);
 
@@ -588,14 +590,14 @@ int main(int argc, char * argv[]) {
 
       query_t* query = queries.front();
 
-      std::vector<std::pair<int, double> > ranking;
+      std::vector<std::pair<string, double> > ranking;
       ranker.rank(query->text, &ranking);
 
       std::cout << "Taily Ranking done : " << getTime() - start << std::endl; // csi-retr
 
       double shardRankStart = getTime();
 
-      std::vector<int> shards;
+      std::vector<string> shards;
       for(size_t i = 0; i < ranking.size(); i++) {
         if (ranking[i].second > v) {
           shards.push_back(ranking[i].first);
@@ -620,7 +622,7 @@ int main(int argc, char * argv[]) {
       double shardRetrievalStart = getTime();
       int cnt = 0;
       for (int i = 0; i < shards.size(); i++) {
-        int shardId = shards[i];
+        string shardId = shards[i];
         if (daemons.count(shardId) == 0)
           continue;
 

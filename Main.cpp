@@ -677,7 +677,7 @@ void run(std::map<string, string>& params, char* queryFile) {
       char* qnum = std::strtok(mutableLine, ":");
       char* query = std::strtok(NULL, ":");
 
-      vector<pair<int, double> > ranking;
+      vector<pair<string, double> > ranking;
       if (query) {
         ranker.rank(query, &ranking);
       }
