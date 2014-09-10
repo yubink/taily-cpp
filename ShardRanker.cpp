@@ -222,7 +222,7 @@ void ShardRanker::rank(string query, vector<pair<string, double> >* ranking) {
     // return the shard with the document with n_i = 1
     for (int i = 1; i < _numShards + 1; i++) {
       if (hasATerm[i]) {
-        ranking->push_back(make_pair(_shardIds[i-1], 1));
+        ranking->push_back(make_pair(_shardIds[i], 1));
         break;
       }
     }
@@ -272,13 +272,13 @@ void ShardRanker::rank(string query, vector<pair<string, double> >* ranking) {
     // based on the mean of the shard (which is the score of the single doc), n_i is either 0 or 1
     if (queryVar[i] < 1e-10 && hasATerm[i]) {
       if (queryMean[i] >= s_c) {
-        ranking->push_back(make_pair(_shardIds[i-1], 1));
+        ranking->push_back(make_pair(_shardIds[i], 1));
       }
     } else {
       // do normal Taily stuff pre-normalized Eq (12)
       boost::math::gamma_distribution<> shardGamma(k[i], theta[i]);
       double p_i = boost::math::cdf(complement(shardGamma, s_c));
-      ranking->push_back(make_pair(_shardIds[i-1], all[i] * p_i));
+      ranking->push_back(make_pair(_shardIds[i], all[i] * p_i));
     }
   }
 
