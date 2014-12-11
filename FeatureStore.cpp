@@ -6,6 +6,7 @@
  */
 
 #include "FeatureStore.h"
+#include <db_cxx.h>
 
 using namespace std;
 
@@ -137,6 +138,7 @@ void FeatureStore::_closeDb(Db* db) {
 FeatureStore::TermIterator::TermIterator(Db* freqDb, Db* infreqDb): _freqDb(freqDb),
     _infreqDb(infreqDb), _finished(false), _current() {
   _freqDb->cursor(NULL, &_freqCursor, 0);
+  _infreqCursor = NULL;
 }
 
 FeatureStore::TermIterator::~TermIterator() {

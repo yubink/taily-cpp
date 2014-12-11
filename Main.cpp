@@ -201,7 +201,13 @@ void buildFromMap(std::map<string, string>& params) {
 
   // open up all output feature storages for each mapping file we are accessing
   vector<FeatureStore*> stores;
-  boost::unordered_map<string, int> shardMap;
+
+  // list of shard maps matching to each index
+  vector<boost::unordered_map<int, int>*> shardMapList;
+  for (int i = 0; i < indexes.size(); i++) {
+	  shardMapList.push_back(new boost::unordered_map<int, int>());
+  }
+
   vector<int> shardIds;
 
   // read in the mapping files given and construct a reverse mapping,
@@ -229,12 +235,16 @@ void buildFromMap(std::map<string, string>& params) {
     int shardId = atoi(shardIdStr.c_str());
     shardIds.push_back(shardId);
 
+    // lines from the file should be in format of INDEX_ID.INTERNAL_DOC_NO
     int lineNum = 0;
     ifstream file;
     file.open((*it).c_str());
     string line;
     while (getline(file, line)) {
-      shardMap[line] = shardId;
+      int divisor = line.find('.');
+      int indexId = atoi(line.substr(0, divisor).c_str());
+      int docId = atoi(line.substr(divisor+1, string::npos).c_str());
+	  shardMapList[indexId][docId] = shardId;
       ++lineNum;
     }
     file.close();
@@ -287,7 +297,6 @@ void buildFromMap(std::map<string, string>& params) {
     int idxCnt = 0;
     vector<Repository*>::iterator rit;
     for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
-      ++idxCnt;
       cout << "  Index #" << idxCnt << endl;
 
       indri::collection::Repository::index_state state = (*rit)->indexes();
@@ -309,12 +318,9 @@ void buildFromMap(std::map<string, string>& params) {
       for (docIter->startIteration(); !docIter->finished(); docIter->nextEntry()) {
         DocListIterator::DocumentData* doc = docIter->currentEntry();
 
-        // get the CW external docno so we can find what shard the doc belongs to
-        string extDocNum = (*rit)->collection()->retrieveMetadatum(doc->document, "docno");
-
         // find the shard id, if this doc belongs to any
-        boost::unordered_map<string, int>::iterator smit = shardMap.find(extDocNum);
-        if (smit == shardMap.end()) continue;
+        boost::unordered_map<int, int>::iterator smit = shardMapList[idxCnt]->find(doc->document);
+        if (smit == shardMapList[idxCnt]->end()) continue;
         int currShardId = (*smit).second;
 
         double length = index->documentLength(doc->document);
@@ -333,6 +339,7 @@ void buildFromMap(std::map<string, string>& params) {
       } // end doc iter
       // free iterator to save RAM!
       delete docIter;
+      ++idxCnt;
 
     } // end index iter
 
@@ -360,6 +367,11 @@ void buildFromMap(std::map<string, string>& params) {
   for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
     (*rit)->close();
     delete (*rit);
+  }
+
+  vector<boost::unordered_map<int, int>*>::iterator mit;
+  for (mit = shardMapList.begin(); mit != shardMapList.end(); ++mit) {
+	delete (*mit);
   }
 }
 
