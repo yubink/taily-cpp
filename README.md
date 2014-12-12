@@ -59,10 +59,11 @@ Optionally, it may also contain:
 
 Parameter files for buildfrommap must contain the following parameters (note that terms is mandatory!):
 * terms: list of terms to collect statistics for (as opposed to all terms in index). Separate using ':'.
-* mapFile: one or more shard map files
+* index: The index(es) of the entire corpus. May be multiple indexes. Separate index paths using ':'. Do not uses   spaces!
+* mapFile: one or more shard map files; lines are of format: <index id>.<internal document id>
+    <index id> is the index where the document with the <internal document id> can be found. The id is an int that should correspond to the order that the indexes are given in the "index" parameter. 
 * db: Directory where the program will create directories for the shard stats of each shard specified in mapFile
-* index: The index(es) of the entire corpus. May be multiple indexes. Separate index paths using ':'. Do not uses spaces!
-* corpusDb: Location (directory) of corpus-wide statistics generated from buildcorpus
+
 Optionally, it may also contain:
 * ram: Approximate limit for RAM (for the Berkeley DB). Specified in MB.
 
