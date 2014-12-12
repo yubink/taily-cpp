@@ -163,9 +163,10 @@ void collectCorpusStats(DocListIterator* docIter, TermData* termData,
 
 void buildFromMap(std::map<string, string>& params) {
 
+  vector<Repository*>::iterator rit;
+
   string dbPath = params["db"]; // in this case, this will be a path to a folder
   string indexstr = params["index"];
-  string corpusDbPath = params["corpusDb"];
 
   int ram = 1500;
   if (params.find("ram") != params.end()) {
@@ -195,9 +196,6 @@ void buildFromMap(std::map<string, string>& params) {
     repo->openRead(value);
     indexes.push_back(repo);
   }
-
-  // open corpus statistics db
-  FeatureStore corpusStats(corpusDbPath, true);
 
   // open up all output feature storages for each mapping file we are accessing
   vector<FeatureStore*> stores;
@@ -244,7 +242,8 @@ void buildFromMap(std::map<string, string>& params) {
       int divisor = line.find('.');
       int indexId = atoi(line.substr(0, divisor).c_str());
       int docId = atoi(line.substr(divisor+1, string::npos).c_str());
-	  shardMapList[indexId][docId] = shardId;
+      boost::unordered_map<int, int>* shardMap = shardMapList.at(indexId);
+      (*shardMap)[docId] = shardId;
       ++lineNum;
     }
     file.close();
@@ -258,9 +257,19 @@ void buildFromMap(std::map<string, string>& params) {
 
   // get the total term length of the collection (for Indri scoring)
   double totalTermCount = 0;
-  string totalTermCountKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-  corpusStats.getFeature((char*) totalTermCountKey.c_str(),
-      &totalTermCount);
+  for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
+    // if it has more than one index, quit
+    Repository::index_state state = (*rit)->indexes();
+    if (state->size() > 1) {
+      cout << "Index has more than 1 part. Can't deal with this, man.";
+      exit(EXIT_FAILURE);
+    }
+    Index* index = (*state)[0];
+    totalTermCount += index->termCount();
+  }
+//  string totalTermCountKey(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+//  corpusStats.getFeature((char*) totalTermCountKey.c_str(),
+//      &totalTermCount);
 
   // only create shard statistics for specified terms
   set<string> stemsSeen;
@@ -285,17 +294,35 @@ void buildFromMap(std::map<string, string>& params) {
       continue;
 
     // get term ctf
-    double ctf;
-    string ctfKey(stem);
-    ctfKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
-    corpusStats.getFeature((char*) ctfKey.c_str(), &ctf);
+    double ctf = 0;
+//    string ctfKey(stem);
+//    ctfKey.append(FeatureStore::TERM_SIZE_FEAT_SUFFIX);
+//    corpusStats.getFeature((char*) ctfKey.c_str(), &ctf);
+    for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
+      // if it has more than one index, quit
+      Repository::index_state state = (*rit)->indexes();
+      if (state->size() > 1) {
+        cout << "Index has more than 1 part. Can't deal with this, man.";
+        exit(EXIT_FAILURE);
+      }
+      Index* index = (*state)[0];
+      totalTermCount += index->termCount();
+
+      DocListIterator* docIter = index->docListIterator(stem);
+
+      // term not found
+      if (docIter == NULL) continue;
+
+      docIter->startIteration();
+      TermData* termData = docIter->termData();
+      ctf += termData->corpus.totalCount;
+    }
 
     //track df for this term for each shard; initialize
     boost::unordered_map<int, shard_data> shardDataMap;
 
     // for each index
     int idxCnt = 0;
-    vector<Repository*>::iterator rit;
     for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
       cout << "  Index #" << idxCnt << endl;
 
@@ -363,7 +390,6 @@ void buildFromMap(std::map<string, string>& params) {
     delete (*fit);
   }
 
-  vector<Repository*>::iterator rit;
   for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
     (*rit)->close();
     delete (*rit);

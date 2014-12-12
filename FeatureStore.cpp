@@ -188,7 +188,8 @@ void FeatureStore::TermIterator::nextTerm() {
 
       // is it a stem ctf key value pair? (there is a #t key for the term count in entire corpus)
       if (idx != string::npos && idx != 0) {
-        string stem = stemKey.substr(0, stemKey.size() - strlen(TERM_SIZE_FEAT_SUFFIX));
+        // (string::size_type) there to make eclipse c++ static analyzer happy.
+        string stem = stemKey.substr((string::size_type)0, stemKey.size() - strlen(TERM_SIZE_FEAT_SUFFIX));
         _current = make_pair(stem, val);
         break;
       }
