@@ -324,8 +324,6 @@ void buildFromMap(std::map<string, string>& params) {
     // for each index
     int idxCnt = 0;
     for (rit = indexes.begin(); rit != indexes.end(); ++rit) {
-      cout << "  Index #" << idxCnt << endl;
-
       indri::collection::Repository::index_state state = (*rit)->indexes();
       if (state->size() > 1) {
         cout << "Index has more than 1 part. Can't deal with this, man.";
@@ -359,15 +357,16 @@ void buildFromMap(std::map<string, string>& params) {
         currShard.f += feat;
         currShard.f2 += pow(feat,2);
         currShard.shardDf += 1;
-
+         
         if (feat < currShard.min) {
           currShard.min = feat;
         }
       } // end doc iter
       // free iterator to save RAM!
       delete docIter;
-      ++idxCnt;
 
+      cout << "  Index #" << idxCnt << endl;
+      ++idxCnt;
     } // end index iter
 
     // add term info to correct shard dbs
