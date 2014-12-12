@@ -29,7 +29,7 @@ If you just want a list of shard rankings, use this:
 ```
 $./Taily run -p PARAM_FILE
 ```
-Each line in the output will be shardId<tab>v value. To specify a v value for the Taily algorithm, just discard everything that has less than the desired v value. I recommend 45 for v. 
+Each line in the output will be `shardId<tab>v` value. To specify a v value for the Taily algorithm, just discard everything that has less than the desired v value. I recommend 45 for v. 
 
 If you want a full retrieval, that is a selective search retrieval which runs a query in selective search using Taily to select the shards, use this:
 ```
@@ -60,8 +60,8 @@ Optionally, it may also contain:
 Parameter files for buildfrommap must contain the following parameters (note that terms is mandatory!):
 * terms: list of terms to collect statistics for (as opposed to all terms in index). Separate using ':'.
 * index: The index(es) of the entire corpus. May be multiple indexes. Separate index paths using ':'. Do not uses   spaces!
-* mapFile: one or more shard map files; lines are of format: <index id>.<internal document id>
-    <index id> is the index where the document with the <internal document id> can be found. The id is an int that should correspond to the order that the indexes are given in the "index" parameter. 
+* mapFile: one or more shard map files; lines are of format: `<index id>.<internal document id>`
+    `<index id>` is the index where the document with the `<internal document id>` can be found. The id is an int that should correspond to the order that the indexes are given in the `index` parameter. 
 * db: Directory where the program will create directories for the shard stats of each shard specified in mapFile
 
 Optionally, it may also contain:
