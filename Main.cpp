@@ -316,6 +316,7 @@ void buildFromMap(std::map<string, string>& params) {
       docIter->startIteration();
       TermData* termData = docIter->termData();
       ctf += termData->corpus.totalCount;
+      delete docIter;
     }
 
     //track df for this term for each shard; initialize
