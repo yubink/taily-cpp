@@ -8,9 +8,10 @@ DOCDUMP_SOURCES=DumpDocVec.cpp
 CXX=g++
 
 ifdef OLDINDRI
-	DEPENDENCIES = lemur xpdf antlr boost_filesystem boost_system
-	INCPATH=-I$(HOME)/indri-5.2/include $(patsubst %, -I$(HOME)/indri-5.2/contrib/%/include, $(DEPENDENCIES))   -I$(HOME)/include
-	LDFLAGS=-g -L$(HOME)/indri-5.2/obj $(patsubst %, -L$(HOME)/indri-5.2/contrib/%/obj, $(DEPENDENCIES)) -L$(HOME)/opt/db-6.0.20.NC/build_unix -ldb_cxx -lindri $(patsubst %, -l%, $(DEPENDENCIES)) -lz -lpthread -lm
+	INDRI_DEPENDENCIES = lemur xpdf antlr 
+	DEPENDENCIES = db_cxx indri z pthread m boost_filesystem boost_system
+	INCPATH=-I$(HOME)/indri-5.2/include $(patsubst %, -I$(HOME)/indri-5.2/contrib/%/include, $(INDRI_DEPENDENCIES)) -I$(HOME)/include
+	LDFLAGS=-g -L$(HOME)/indri-5.2/obj $(patsubst %, -L$(HOME)/indri-5.2/contrib/%/obj, $(INDRI_DEPENDENCIES)) -L$(HOME)/lib $(patsubst %, -l%, $(DEPENDENCIES))  $(patsubst %, -l%, $(INDRI_DEPENDENCIES)) 
 else
 	DEPENDENCIES = db_cxx indri z pthread m boost_filesystem boost_system
 	INCPATH=-I$(HOME)/include 
