@@ -68,7 +68,7 @@ Optionally, it may also contain:
 * ram: Approximate limit for RAM (for the Berkeley DB). Specified in MB.
 
 Parameter file for Taily run:
-* db: List of shard statistics Dbs in order of the desired shardId. 
+* db: List of shard statistics Dbs in order of the desired shardId. First db MUST be the global db generated from buildcorpus. Separate paths using ':'.
 * index: An indri index; used for stemming/term processing.
 * n_c: The n paramter for the Taily algorithm. Use 400 or so if you're not sure.
 

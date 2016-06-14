@@ -117,10 +117,10 @@ void FeatureStore::_openDb(const char* dbPath, Db* db, u_int32_t oFlags, int cac
         oFlags, // Open flags
         0); // File mode (using defaults)
   } catch (DbException &e) {
-    cerr << "Error opening DB. Exiting." << endl << e.what() << endl;
+    cerr << "Error opening DB. Exiting." << dbPath << endl << e.what() << endl;
     exit(EXIT_FAILURE);
   } catch (std::exception &e) {
-    cerr << "Error opening DB. Exiting." << endl << e.what() << endl;
+    cerr << "Error opening DB. Exiting." << dbPath << endl << e.what() << endl;
     exit(EXIT_FAILURE);
   }
 }
