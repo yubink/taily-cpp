@@ -27,9 +27,9 @@ $./Taily buildfrommap -p PARAM_FILE
 
 If you just want a list of shard rankings, use this:
 ```
-$./Taily run -p PARAM_FILE
+$./Taily run -p PARAM_FILE -q QUERY_FILE
 ```
-Each line in the output will be `shardId<tab>v` value. To specify a v value for the Taily algorithm, just discard everything that has less than the desired v value. I recommend 45 for v. 
+Each line in the output will be `shardId<tab>v` value. To specify a v value for the Taily algorithm, just discard everything that has less than the desired v value. I recommend 45 for v. Parameter and query files formats are described below.
 
 If you want a full retrieval, that is a selective search retrieval which runs a query in selective search using Taily to select the shards, use this:
 ```
@@ -40,7 +40,8 @@ $./TailyRunQuery INDRI_STYLE_PARAM_FILE
 
 ###Commands using ./Taily
 
-Parameter files are simple key=value pairs. No space before or after '='! 
+Parameter files are simple key=value pairs. No space before or after '='!
+Example files can be found under the example directory.
 
 Parameter files for buildcorpus must contain the following parameters:
 * db: The directory where the corpus statistics files will be written.
@@ -71,6 +72,16 @@ Parameter file for Taily run:
 * db: List of shard statistics Dbs in order of the desired shardId. First db MUST be the global db generated from buildcorpus. Separate paths using ':'.
 * index: An indri index; used for stemming/term processing.
 * n_c: The n paramter for the Taily algorithm. Use 400 or so if you're not sure.
+
+Query file for Taily run:
+* Each line should contain the query in the format of QUERY_NUM:QUERY TEXT.
+  Example:
+```
+1:obama family tree
+2:a man a plan a canal
+3:panama
+```
+
 
 ### ./TailyRunQuery
 

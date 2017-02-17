@@ -1,0 +1,3 @@
+db=/home/yubink/taily/corpusdb:/home/yubink/cwb09_shards/1:/home/yubink/cwb09_shards/2:/home/yubink/cwb09_shards/3:/home/yubink/cwb10_shards/4
+index=/home/yubink/cwb09_shards/1
+n_c=400
