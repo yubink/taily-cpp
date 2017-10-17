@@ -50,7 +50,7 @@ void ShardRanker::_getStems(string query, vector<string>* output) {
 }
 
 void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean,
-    double* queryVar, bool* hasATerm) {
+    double* queryVar, bool* hasATerm, double* dfTerm) {
   // calculate mean and variances for query for all shards
   vector<string>::iterator it;
 
@@ -94,6 +94,8 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean,
       if (df == 0)
         continue;
       hasATerm[i] = true;
+      dfTerm[i] = df;
+      dfTerm[0] += df;
 
       // add current term's mean to shard; also shift by min feat value Eq (5)
       double fSum = 0;
@@ -136,6 +138,7 @@ void ShardRanker::_getQueryFeats(vector<string>& stems, double* queryMean,
     // adjust shard mean by minimum value
     for (uint i = 0; i <= _numShards; i++) {
       if (dfCache[i] > 0) {
+    	// FIXME: removes shard corresponding to minVal?
         queryMean[i] -= minVal;
       }
     }
@@ -166,9 +169,9 @@ void ShardRanker::_getAll(vector<string>& stems, double* all) {
       double df;
       _stores[i]->getFeature((char*) stem.c_str(), &df);
 
-      // smooth it
-      if (df < 5)
-        df = 5;
+      // no smoothing
+      if (df < 1)
+        df = 0;
 
       // store df for all_i calculation
       dfs[dfCnt++] = df;
@@ -198,15 +201,17 @@ void ShardRanker::rank(string query, vector<pair<string, double> >* ranking) {
   double queryMean[_numShards + 1];
   double queryVar[_numShards + 1];
   bool hasATerm[_numShards + 1]; // to mark shards that have at least one doc for one query term
+  double dfTerm[_numShards + 1]; // used in the ranking for var ~= 0 cases
 
   // query total means and variances for each shard
   for (int i = 0; i < _numShards + 1; i++) {
     queryMean[i] = queryVar[i] = 0.0;
     hasATerm[i] = false;
+    dfTerm[i] = 0.0;
   }
   vector<string> stems;
   _getStems(query, &stems);
-  _getQueryFeats(stems, queryMean, queryVar, hasATerm);
+  _getQueryFeats(stems, queryMean, queryVar, hasATerm, dfTerm);
 
   // fast fall-through for 2 degenerate cases
   if (!hasATerm[0]) {
@@ -222,11 +227,35 @@ void ShardRanker::rank(string query, vector<pair<string, double> >* ranking) {
     // return the shard with the document with n_i = 1
     for (int i = 1; i < _numShards + 1; i++) {
       if (hasATerm[i]) {
-        ranking->push_back(make_pair(_shardIds[i], 1));
-        break;
+        ranking->push_back(make_pair(_shardIds[i], dfTerm[i]));
+      } else {
+    	ranking->push_back(make_pair(_shardIds[i], 0));
       }
     }
     return;
+  }
+
+  // all from Eq (10)
+  double all[_numShards + 1];
+  for (int i = 0; i < _numShards + 1; i++) {
+    all[i] = 0.0;
+  }
+  _getAll(stems, all);
+
+  // fast fall-through for for 1 degenerate case
+  if (all[0] < 1e-10) {
+	// if all[0] is ~= 0, then all[i] is ~= 0 because no shard contains all of the query terms
+	// these all[0] ~= 0 cases should be handled carefully; instead of just using queryMean,
+	// it could be more effective calculating *all* again for the maximum number of query terms
+	for (int i = 1; i < _numShards + 1; i++) {
+	  if (hasATerm[i]) {
+	    // actually use mean of the shard as score
+		ranking->push_back(make_pair(_shardIds[i], queryMean[i]));
+      } else {
+        ranking->push_back(make_pair(_shardIds[i], 0));
+	  }
+	}
+	return;
   }
 
   // calculate k and theta from mean/vars Eq (7) (8)
@@ -236,21 +265,14 @@ void ShardRanker::rank(string query, vector<pair<string, double> >* ranking) {
   for (int i = 0; i < _numShards + 1; i++) {
     // special case, if df = 1, then var ~= 0 (or if no terms occur in shard)
     if (queryVar[i] < 1e-10) {
-      k[i] = -1;
-      theta[i] = -1;
-      continue;
+  	  k[i] = -1;
+	  theta[i] = -1;
+	  continue;
     }
 
     k[i] = pow(queryMean[i], 2) / queryVar[i];
     theta[i] = queryVar[i] / queryMean[i];
   }
-
-  // all from Eq (10)
-  double all[_numShards + 1];
-  for (int i = 0; i < _numShards + 1; i++) {
-    all[i] = 0.0;
-  }
-  _getAll(stems, all);
 
   // calculate s_c from inline equation after Eq (11)
   double p_c = _n_c / all[0];
@@ -265,14 +287,17 @@ void ShardRanker::rank(string query, vector<pair<string, double> >* ranking) {
   // calculate n_i for all shards and store it in ranking vector so we can sort (unnormalized)
   for (int i = 1; i < _numShards + 1; i++) {
     // if there are no query terms in shard, skip
-    if (!hasATerm[i])
+    if (!hasATerm[i]) {
+      ranking->push_back(make_pair(_shardIds[i], 0));
       continue;
+    }
 
     // if var is ~= 0, then don't build a distribution.
     // based on the mean of the shard (which is the score of the single doc), n_i is either 0 or 1
     if (queryVar[i] < 1e-10 && hasATerm[i]) {
       if (queryMean[i] >= s_c) {
-        ranking->push_back(make_pair(_shardIds[i], 1));
+    	// actually use mean of the shard as score
+        ranking->push_back(make_pair(_shardIds[i], queryMean[i]));
       }
     } else {
       // do normal Taily stuff pre-normalized Eq (12)

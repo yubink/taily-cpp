@@ -32,7 +32,7 @@ private:
 
   // retrieves the mean/variance for query terms and fills in the given queryMean/queryVar arrays
   // and marks shards that have at least one doc for one query term in given bool array
-  void _getQueryFeats(vector<string>& stems, double* queryMean, double* queryVar, bool* hasATerm);
+  void _getQueryFeats(vector<string>& stems, double* queryMean, double* queryVar, bool* hasATerm, double* dfTerm);
 
   // tokenizes, stems and stops query term into output vector
   void _getStems(string query, vector<string>* output);
