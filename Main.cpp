@@ -220,7 +220,7 @@ void buildFromMap(std::map<string, string>& params) {
     // create output directory for the feature store dbs
     const char* cPath = (dbPath+"/"+shardIdStr).c_str();
     if (mkdir(cPath,0777) == -1) {
-      cerr << "Error creating output DB dir. Dir may already exist." << endl;
+      cerr << "Error creating output DB dir. Dir '" << cPath << "' may already exist." << endl;
       exit(EXIT_FAILURE);
     }
 

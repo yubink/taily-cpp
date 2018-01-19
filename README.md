@@ -3,7 +3,7 @@ taily-cpp
 
 C++ implementation of Taily, a resource selection algorithm for selective search. Requires Indri search engine, Berkeley DB, and Boost. Please don't judge me; this is research code and horrible. :(
 
-##How to Build Taily 
+## How to Build Taily 
 Taily first needs to collect corpus statistics and create some data structures in order to be used in querying.
 
 ### From indexed shards
@@ -23,7 +23,7 @@ $./Taily buildcorpus -p PARAM_FILE
 $./Taily buildfrommap -p PARAM_FILE 
 ```
 
-##How to Run Taily
+## How to Run Taily
 
 If you just want a list of shard rankings, use this:
 ```
@@ -36,9 +36,9 @@ If you want a full retrieval, that is a selective search retrieval which runs a 
 $./TailyRunQuery INDRI_STYLE_PARAM_FILE
 ```
 
-##Parameter Files
+## Parameter Files
 
-###Commands using ./Taily
+### Commands using ./Taily
 
 Parameter files are simple key=value pairs. No space before or after '='!
 Example files can be found under the example directory.
@@ -69,7 +69,7 @@ Optionally, it may also contain:
 * ram: Approximate limit for RAM (for the Berkeley DB). Specified in MB.
 
 Parameter file for Taily run:
-* db: List of shard statistics Dbs in order of the desired shardId. First db MUST be the global db generated from buildcorpus. Separate paths using ':'.
+* db: List of shard statistics Dbs in order of the desired shardId. First db MUST be the global db generated from buildcorpus. Following dbs should be the paths to the individual shard dbs. Separate paths using ':'. e.g. db=/path/to/corpusdb:/path/to/shard1db:/path/to/shard2db 
 * index: An indri index; used for stemming/term processing.
 * n_c: The n paramter for the Taily algorithm. Use 400 or so if you're not sure.
 
